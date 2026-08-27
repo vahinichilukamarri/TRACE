@@ -1,0 +1,53 @@
+"""
+Central configuration, all overridable via environment variables / .env.
+"""
+import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+class Settings:
+    # --- Database ---
+    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'trace.db'}")
+
+    # --- Agent ---
+    AGENT_MODE: str = os.getenv("AGENT_MODE", "HEURISTIC")  # HEURISTIC | LLM
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    AGENT_MIN_CONFIDENCE: float = float(os.getenv("AGENT_MIN_CONFIDENCE", "0.5"))
+
+    # --- Policy ---
+    MAX_RECOVERY_ATTEMPTS: int = int(os.getenv("MAX_RECOVERY_ATTEMPTS", "3"))
+    RECOVERY_WINDOW_MINUTES: int = int(os.getenv("RECOVERY_WINDOW_MINUTES", "4320"))  # 3 days
+    MAX_SAME_ACTION_REPEATS: int = int(os.getenv("MAX_SAME_ACTION_REPEATS", "1"))
+    HIGH_VALUE_THRESHOLD: float = float(os.getenv("HIGH_VALUE_THRESHOLD", "50000"))
+    POLICY_MIN_CONFIDENCE: float = float(os.getenv("POLICY_MIN_CONFIDENCE", "0.4"))
+
+    # --- Reassessment loop bound (safety: never allow unbounded loops) ---
+    MAX_REASSESSMENT_ITERATIONS: int = int(os.getenv("MAX_REASSESSMENT_ITERATIONS", "4"))
+
+    # --- Email ---
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    EMAIL_FROM: str = os.getenv("EMAIL_FROM", "recovery@trace-demo.example")
+    RECOVERY_LINK_BASE_URL: str = os.getenv("RECOVERY_LINK_BASE_URL", "http://localhost:8000/pay")
+
+    # --- Simulation ---
+    SIMULATION_SEED: int = int(os.getenv("SIMULATION_SEED", "42"))
+    DEFAULT_BATCH_SIZE: int = int(os.getenv("DEFAULT_BATCH_SIZE", "300"))
+
+    # --- App ---
+    APP_NAME: str = "TRACE"
+    CORS_ORIGINS: list = ["*"]
+
+
+settings = Settings()
