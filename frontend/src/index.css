@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-feature-settings: "tnum" 1;
+  }
+  ::selection {
+    background: #ff6b35;
+    color: #f5f2ea;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #d8d4c8 transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: #d8d4c8;
+    border-radius: 0;
+  }
+}
+
+@layer components {
+  /* hairline divider — used instead of card shadows throughout */
+  .hairline {
+    @apply border-mist-dark/70;
+  }
+
+  .label-micro {
+    @apply font-mono text-micro uppercase tracking-widest text-obsidian/45;
+  }
+
+  .kicker {
+    @apply font-mono text-micro uppercase tracking-[0.18em] text-obsidian/50;
+  }
+
+  .mono-num {
+    @apply font-mono tabular-nums;
+  }
+
+  .panel {
+    @apply border border-mist-dark/70 bg-bone-soft;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center gap-2 border border-obsidian bg-obsidian px-3.5 py-2 text-sm font-medium text-bone transition-colors hover:bg-signal-orange hover:border-signal-orange;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 border border-mist-dark/70 bg-transparent px-3.5 py-2 text-sm font-medium text-obsidian/80 transition-colors hover:border-obsidian hover:text-obsidian;
+  }
+}
