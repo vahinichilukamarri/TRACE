@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.routers import cases, evaluation, dashboard
+from app.routers import cases, evaluation, dashboard, policy_info
 
 app = FastAPI(
     title="TRACE - Transaction Recovery Agent with Contextual Evaluation",
@@ -48,3 +48,4 @@ def health():
 app.include_router(cases.router)
 app.include_router(evaluation.router)
 app.include_router(dashboard.router)
+app.include_router(policy_info.router)

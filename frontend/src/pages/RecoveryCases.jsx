@@ -1,125 +1,109 @@
-import { useEffect, useState, useCallback } from "react";
-import AppShell from "../components/shell/AppShell";
-import CaseRow from "../components/cases/CaseRow";
-import { LoadingState, ErrorState, EmptyState } from "../components/common/States";
-import { api } from "../lib/api";
+import { useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Inbox } from "lucide-react";
+import { api } from "@/api/client";
+import { useApi } from "@/hooks/useApi";
+import { PageHeader } from "@/components/Page";
+import { CaseCard } from "@/components/CaseCard";
+import { EmptyState, ErrorState, LoadingState } from "@/components/States";
+import { CASE_STATUS_LABELS } from "@/lib/domain";
 
-const STATUS_FILTERS = ["ALL", "OPEN", "ESCALATED", "RECOVERED", "STOPPED", "EXPIRED"];
+const STATUS_FILTERS = ["ALL", "OPEN", "RECOVERED", "STOPPED", "ESCALATED", "EXPIRED"];
 const PAGE_SIZE = 20;
 
 export default function RecoveryCases() {
-  const [items, setItems] = useState(null);
-  const [error, setError] = useState(null);
-  const [status, setStatus] = useState("ALL");
-  const [offset, setOffset] = useState(0);
-  const [details, setDetails] = useState({});
+  const [searchParams, setSearchParams] = useSearchParams();
+  const status = searchParams.get("status") || "ALL";
+  const [page, setPage] = useState(0);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const data = await api.listCases({
+  const fetcher = useCallback(
+    () =>
+      api.listCases({
         status: status === "ALL" ? undefined : status,
+        system: "TRACE",
         limit: PAGE_SIZE,
-        offset,
-      });
-      setItems(data);
+        offset: page * PAGE_SIZE,
+      }),
+    [status, page]
+  );
+  const { data: cases, loading, error, refresh } = useApi(fetcher, [status, page]);
 
-      // fetch decision detail for the visible page only — keeps this cheap
-      const entries = await Promise.all(
-        data.map(async (c) => {
-          try {
-            const d = await api.getCase(c.payment_id);
-            return [c.payment_id, d.decisions?.[d.decisions.length - 1] || null];
-          } catch {
-            return [c.payment_id, null];
-          }
-        })
-      );
-      setDetails(Object.fromEntries(entries));
-    } catch (e) {
-      setError(e);
+  const setStatus = (s) => {
+    setPage(0);
+    if (s === "ALL") {
+      searchParams.delete("status");
+    } else {
+      searchParams.set("status", s);
     }
-  }, [status, offset]);
+    setSearchParams(searchParams);
+  };
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const counts = useMemo(() => cases?.length ?? 0, [cases]);
 
   return (
-    <AppShell title="Recovery Cases" subtitle="Every case TRACE is tracking, ranked by why it matters">
-      <div className="mb-5 flex items-center gap-1">
-        {STATUS_FILTERS.map((s) => (
-          <button
-            key={s}
-            onClick={() => {
-              setStatus(s);
-              setOffset(0);
-            }}
-            className={`border px-3 py-1.5 text-xs font-medium transition-colors ${
-              status === s
-                ? "border-obsidian bg-obsidian text-bone"
-                : "border-mist-dark text-obsidian/60 hover:border-obsidian hover:text-obsidian"
-            }`}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
+    <div>
+      <PageHeader
+        eyebrow="Recovery cases"
+        title="Recovery intelligence queue"
+        description="Every failed payment TRACE is tracking, why it matters, and what happens next."
+      />
 
-      {error && <ErrorState message="Could not load cases" detail={error.message} onRetry={load} />}
-      {!error && items === null && <LoadingState label="Loading recovery cases" />}
-      {!error && items && items.length === 0 && (
-        <EmptyState label="No cases match this filter" detail="Try a different status, or ingest a new payment-failure event." />
-      )}
-
-      {!error && items && items.length > 0 && (
-        <div className="panel">
-          <div className="grid grid-cols-12 gap-3 border-b border-mist-dark bg-mist/30 px-5 py-2.5">
-            {["Pri", "Payment ID", "Amount", "Failure", "Attempts", "TRACE Decision", "Status", ""].map((h, i) => (
-              <div
-                key={h + i}
-                className={`kicker ${[1, 2, 6].includes(i) ? "" : "text-center"} ${
-                  ["col-span-1", "col-span-2", "col-span-1", "col-span-2", "col-span-1", "col-span-2", "col-span-2", "col-span-1"][i]
-                }`}
-              >
-                {h}
-              </div>
-            ))}
-          </div>
-          {items.map((item) => (
-            <CaseRow
-              key={item.payment_id}
-              item={item}
-              latestDecision={details[item.payment_id]}
-              loadingDetail={!(item.payment_id in details)}
-            />
+      <div className="px-8 py-6">
+        <div className="flex items-center gap-1 mb-6 border-b border-obsidian-line pb-3">
+          {STATUS_FILTERS.map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatus(s)}
+              className={`px-3 py-1.5 text-xs font-mono uppercase tracking-wide transition-colors ${
+                status === s
+                  ? "bg-signal-orange text-obsidian font-medium"
+                  : "text-ink-faint hover:text-bone"
+              }`}
+            >
+              {s === "ALL" ? "All" : CASE_STATUS_LABELS[s] || s}
+            </button>
           ))}
         </div>
-      )}
 
-      {!error && items && (
-        <div className="mt-4 flex items-center justify-between">
-          <span className="text-xs text-obsidian/40">
-            Showing {items.length ? offset + 1 : 0}–{offset + items.length}
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
-              disabled={offset === 0}
-              className="btn-ghost !px-3 !py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Previous
-            </button>
-            <button
-              onClick={() => setOffset((o) => o + PAGE_SIZE)}
-              disabled={items.length < PAGE_SIZE}
-              className="btn-ghost !px-3 !py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
-    </AppShell>
+        {loading && <LoadingState label="Loading cases" />}
+        {error && <ErrorState description={error.message} onRetry={refresh} />}
+
+        {cases && cases.length === 0 && (
+          <EmptyState
+            icon={Inbox}
+            title="No cases in this view"
+            description="Try a different status filter, or run an evaluation from the Command Center to generate a batch of cases."
+          />
+        )}
+
+        {cases && cases.length > 0 && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {cases.map((c) => (
+                <CaseCard key={c.payment_id} caseData={c} />
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between mt-6">
+              <button
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="text-xs font-mono uppercase tracking-wide text-ink-faint disabled:opacity-30 hover:text-bone"
+              >
+                ← Previous
+              </button>
+              <span className="text-[11px] font-mono text-ink-faint">Page {page + 1}</span>
+              <button
+                onClick={() => setPage((p) => (counts < PAGE_SIZE ? p : p + 1))}
+                disabled={counts < PAGE_SIZE}
+                className="text-xs font-mono uppercase tracking-wide text-ink-faint disabled:opacity-30 hover:text-bone"
+              >
+                Next →
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

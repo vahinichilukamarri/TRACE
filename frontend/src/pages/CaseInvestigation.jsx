@@ -1,165 +1,194 @@
-import { useEffect, useState, useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, RefreshCw, MousePointerClick } from "lucide-react";
-import AppShell from "../components/shell/AppShell";
-import { LoadingState, ErrorState } from "../components/common/States";
-import RecoveryTraceLine from "../components/trace/RecoveryTraceLine";
-import ReasoningPanel from "../components/trace/ReasoningPanel";
-import PolicyCheckPanel from "../components/trace/PolicyCheckPanel";
-import ActionOutcomePanel from "../components/trace/ActionOutcomePanel";
-import Timeline from "../components/trace/Timeline";
-import StatusIndicator from "../components/common/StatusIndicator";
-import { api } from "../lib/api";
-import { formatINR, formatPct, formatTime } from "../lib/format";
-import { CASE_STATUS_COLOR, CASE_STATUS_LABEL, FAILURE_LABEL } from "../lib/constants";
+import { useCallback, useState } from "react";
+import { useParams } from "react-router-dom";
+import { MousePointerClick, RefreshCw } from "lucide-react";
+import { api } from "@/api/client";
+import { useApi } from "@/hooks/useApi";
+import { PageHeader, Section } from "@/components/Page";
+import { Button } from "@/components/Button";
+import { RecoveryTraceLine } from "@/components/RecoveryTraceLine";
+import { Timeline } from "@/components/Timeline";
+import { DecisionPanel, PolicyCheckPanel, ExecutionPanel, OutcomePanel } from "@/components/DecisionPanels";
+import { StatusPill } from "@/components/StatusIndicator";
+import { ErrorState, LoadingState } from "@/components/States";
+import { deriveTraceStage } from "@/lib/caseStage";
+import { groupCaseIterations } from "@/lib/caseGrouping";
+import { CASE_STATUS_LABELS, FAILURE_LABELS, STATUS_SIGNAL } from "@/lib/domain";
+import { formatCurrency, formatDateTime, formatPercent } from "@/lib/format";
 
 export default function CaseInvestigation() {
   const { paymentId } = useParams();
-  const [detail, setDetail] = useState(null);
-  const [error, setError] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [actionPending, setActionPending] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(null);
+  const fetcher = useCallback(() => api.getCase(paymentId), [paymentId]);
+  const { data: caseData, loading, error, refresh } = useApi(fetcher, [paymentId]);
+
+  const { activeIndex, finalSignal, reassessed } = deriveTraceStage(caseData);
+  const rounds = groupCaseIterations(caseData);
+  const latestDecision = caseData?.decisions?.[caseData.decisions.length - 1];
+  const isTerminal = caseData && caseData.status !== "OPEN";
+
+  const canReassess = caseData && !isTerminal;
+  const canClick = caseData && !isTerminal && latestDecision?.action === "SEND_RECOVERY_LINK";
+
+  const handleReassess = async () => {
+    setActionPending(true);
     try {
-      const d = await api.getCase(paymentId);
-      setDetail(d);
+      await api.reassessCase(paymentId);
+      await refresh();
     } catch (e) {
-      setError(e);
-    }
-  }, [paymentId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const isTerminal = detail && ["RECOVERED", "STOPPED", "ESCALATED", "EXPIRED"].includes(detail.status);
-
-  async function handleReassess() {
-    setBusy(true);
-    try {
-      await api.reassess(paymentId);
-      await load();
-    } catch (e) {
-      setError(e);
+      console.error(e);
     } finally {
-      setBusy(false);
+      setActionPending(false);
     }
-  }
+  };
 
-  async function handleClick() {
-    setBusy(true);
+  const handleClick = async () => {
+    setActionPending(true);
     try {
-      await api.click(paymentId);
-      await load();
+      await api.clickRecoveryLink(paymentId);
+      await refresh();
     } catch (e) {
-      setError(e);
+      console.error(e);
     } finally {
-      setBusy(false);
+      setActionPending(false);
     }
-  }
+  };
 
   return (
-    <AppShell title="Case Investigation" subtitle={paymentId}>
-      <Link to="/cases" className="mb-5 inline-flex items-center gap-1.5 text-xs text-obsidian/50 hover:text-obsidian">
-        <ArrowLeft size={12} /> Back to Recovery Cases
-      </Link>
-
-      {error && <ErrorState message="Could not load this case" detail={error.message} onRetry={load} />}
-      {!error && !detail && <LoadingState label="Loading case file" />}
-
-      {detail && (
-        <div className="space-y-8">
-          {/* Transaction summary */}
-          <div className="panel">
-            <div className="flex items-center justify-between border-b border-mist-dark/70 px-6 py-4">
-              <div className="flex items-center gap-4">
-                <span className="mono-num text-base font-semibold text-obsidian">{detail.payment_id}</span>
-                <StatusIndicator color={CASE_STATUS_COLOR[detail.status]} label={CASE_STATUS_LABEL[detail.status]} pulse={detail.status === "OPEN"} />
-              </div>
-              <div className="flex gap-2">
-                {!isTerminal && (
-                  <button onClick={handleReassess} disabled={busy} className="btn-ghost !px-3 !py-1.5 text-xs disabled:opacity-50">
-                    <RefreshCw size={12} className={busy ? "animate-spin" : ""} /> Reassess
-                  </button>
-                )}
-                {!isTerminal && detail.customer_engagement === "LINK_SENT" && (
-                  <button onClick={handleClick} disabled={busy} className="btn-primary !px-3 !py-1.5 text-xs disabled:opacity-50">
-                    <MousePointerClick size={12} /> Simulate Customer Click
-                  </button>
-                )}
-              </div>
+    <div>
+      <PageHeader
+        eyebrow="Case investigation"
+        title={paymentId}
+        description="Why TRACE did what it did -- every observation, decision, guardrail, and outcome, in order."
+        action={
+          caseData && (
+            <div className="flex items-center gap-2">
+              {canClick && (
+                <Button variant="secondary" onClick={handleClick} disabled={actionPending}>
+                  <MousePointerClick className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  Simulate link click
+                </Button>
+              )}
+              {canReassess && (
+                <Button onClick={handleReassess} disabled={actionPending}>
+                  <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  Reassess now
+                </Button>
+              )}
             </div>
+          )
+        }
+      />
 
-            <div className="grid grid-cols-2 gap-6 px-6 py-5 md:grid-cols-6">
-              <SummaryField label="Amount" value={formatINR(detail.amount)} />
-              <SummaryField label="Failure" value={FAILURE_LABEL[detail.failure_type] || detail.failure_type || "—"} />
-              <SummaryField label="Classification" value={detail.classification_method || "—"} />
-              <SummaryField label="Class. Confidence" value={detail.classification_confidence != null ? formatPct(detail.classification_confidence) : "—"} />
-              <SummaryField label="Customer Success Rate" value={formatPct(detail.customer_success_rate)} />
-              <SummaryField label="Prior Attempts" value={detail.previous_recovery_attempts} />
-              <SummaryField label="Opportunities Left" value={detail.remaining_recovery_opportunities} />
-              <SummaryField label="Time Since Failure" value={`${detail.time_since_failure_minutes}m`} />
-              <SummaryField label="Engagement" value={detail.customer_engagement} />
-              <SummaryField label="Source" value={detail.source} />
-              <SummaryField label="Created" value={formatTime(detail.created_at)} />
-              <SummaryField label="Updated" value={formatTime(detail.updated_at)} />
-            </div>
+      <div className="px-8 py-8 space-y-10">
+        {loading && <LoadingState label="Loading case" />}
+        {error && (
+          <ErrorState
+            title={error.status === 404 ? "Case not found" : "This case failed to load"}
+            description={error.status === 404 ? `No case exists for payment ID "${paymentId}".` : error.message}
+            onRetry={error.status === 404 ? undefined : refresh}
+          />
+        )}
 
-            <div className="border-t border-mist-dark/70 px-6 py-5">
-              <div className="kicker mb-3">Recovery Trace Line</div>
-              <RecoveryTraceLine caseDetail={detail} variant="full" />
-            </div>
-          </div>
+        {caseData && (
+          <>
+            {/* Transaction summary */}
+            <Section title="Transaction summary">
+              <div className="border border-obsidian-line bg-obsidian-soft p-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
+                      Amount
+                    </div>
+                    <div className="mono-tabular text-2xl font-semibold text-bone">
+                      {formatCurrency(caseData.amount, caseData.currency)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
+                      Failure
+                    </div>
+                    <div className="text-sm text-bone font-medium">
+                      {FAILURE_LABELS[caseData.failure_type] || caseData.failure_type || "Unclassified"}
+                    </div>
+                    <div className="text-[10px] font-mono text-ink-faint mt-0.5">
+                      {caseData.classification_method}
+                      {caseData.classification_confidence != null &&
+                        ` · ${formatPercent(caseData.classification_confidence)} confidence`}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
+                      Current state
+                    </div>
+                    <StatusPill signal={STATUS_SIGNAL[caseData.status] || "neutral"}>
+                      {CASE_STATUS_LABELS[caseData.status] || caseData.status}
+                    </StatusPill>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
+                      Recovery worthiness
+                    </div>
+                    <div className="text-sm text-bone font-medium">
+                      {latestDecision
+                        ? latestDecision.decision === "RECOVERY_WORTH_PURSUING"
+                          ? "Worth pursuing"
+                          : "Not worth pursuing"
+                        : "Not yet evaluated"}
+                    </div>
+                    {latestDecision && (
+                      <div className="text-[10px] font-mono text-ink-faint mt-0.5">
+                        {formatPercent(latestDecision.confidence)} confidence
+                      </div>
+                    )}
+                  </div>
+                </div>
 
-          {/* Reasoning */}
-          {detail.decisions?.length > 0 && (
-            <ReasoningPanel decision={detail.decisions[detail.decisions.length - 1]} />
-          )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 pt-6 border-t border-obsidian-line text-xs font-mono text-ink-faint">
+                  <div>customer success rate: <span className="text-bone">{Math.round(caseData.customer_success_rate * 100)}%</span></div>
+                  <div>previous failures: <span className="text-bone">{caseData.previous_failures}</span></div>
+                  <div>recovery attempts: <span className="text-bone">{caseData.previous_recovery_attempts}</span></div>
+                  <div>opportunities left: <span className="text-bone">{caseData.remaining_recovery_opportunities}</span></div>
+                  <div>customer engagement: <span className="text-bone">{caseData.customer_engagement}</span></div>
+                  <div>time since failure: <span className="text-bone">{caseData.time_since_failure_minutes}m</span></div>
+                  <div>source: <span className="text-bone">{caseData.source}</span></div>
+                  <div>created: <span className="text-bone">{formatDateTime(caseData.created_at)}</span></div>
+                </div>
 
-          {/* Policy */}
-          <PolicyCheckPanel checks={detail.policy_checks} />
-
-          {/* Action + Outcome */}
-          <ActionOutcomePanel executions={detail.executions} outcomes={detail.outcomes} />
-
-          {/* Reassessment history, if any */}
-          {detail.decisions?.length > 1 && (
-            <div className="panel">
-              <div className="border-b border-mist-dark/70 px-5 py-3.5">
-                <span className="text-sm font-medium text-obsidian">Reassessment History</span>
+                <RecoveryTraceLine activeIndex={activeIndex} finalSignal={finalSignal} reassessed={reassessed} />
               </div>
-              <div className="divide-y divide-mist-dark/70">
-                {detail.decisions.map((d, i) => (
-                  <div key={i} className="flex items-center justify-between px-5 py-3">
-                    <span className="kicker">Iteration {d.iteration}</span>
-                    <span className="text-sm text-obsidian">{d.action}</span>
-                    <span className="mono-num text-xs text-obsidian/40">{formatPct(d.confidence)} confidence</span>
-                    <span className="mono-num text-xs text-obsidian/35">{formatTime(d.created_at)}</span>
+            </Section>
+
+            {/* Decision rounds -- reasoning, policy, action, outcome grouped per reassessment pass */}
+            <Section title={rounds.length > 1 ? "Decision rounds (reassessment history)" : "TRACE decision"}>
+              <div className="space-y-6">
+                {rounds.map((round, i) => (
+                  <div key={i}>
+                    {rounds.length > 1 && (
+                      <div className="text-[10px] font-mono uppercase tracking-wide text-signal-amber mb-2">
+                        {i === 0 ? "Initial pass" : `Reassessment ${i}`} · iteration {round.iteration}
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                      <DecisionPanel decision={round.decision} />
+                      <PolicyCheckPanel policy={round.policy} />
+                      {round.execution && <ExecutionPanel execution={round.execution} />}
+                      {round.outcome && <OutcomePanel outcome={round.outcome} />}
+                    </div>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            </Section>
 
-          {/* Full audit timeline */}
-          <div>
-            <h2 className="mb-3 text-sm font-medium text-obsidian">Recovery Timeline</h2>
-            <div className="panel px-6 py-6">
-              <Timeline events={detail.audit_log} />
-            </div>
-          </div>
-        </div>
-      )}
-    </AppShell>
-  );
-}
-
-function SummaryField({ label, value }) {
-  return (
-    <div>
-      <div className="label-micro">{label}</div>
-      <div className="mono-num mt-1 text-sm font-medium text-obsidian">{value ?? "—"}</div>
+            {/* Recovery timeline */}
+            <Section title="Recovery timeline">
+              <div className="border border-obsidian-line bg-obsidian-soft p-6">
+                <Timeline entries={caseData.audit_log} />
+              </div>
+            </Section>
+          </>
+        )}
+      </div>
     </div>
   );
 }

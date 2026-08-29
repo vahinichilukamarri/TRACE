@@ -1,186 +1,205 @@
-import { useEffect, useState, useCallback } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Cell } from "recharts";
-import AppShell from "../components/shell/AppShell";
-import { LoadingState, ErrorState, EmptyState } from "../components/common/States";
-import ComparisonMetric from "../components/trace/ComparisonMetric";
-import ChartContainer from "../components/common/ChartContainer";
-import { useEvalRun } from "../lib/EvalRunContext";
-import { api } from "../lib/api";
-import { formatINR, formatPct, formatNumber } from "../lib/format";
-import { SIGNAL, FAILURE_LABEL, ACTION_LABEL } from "../lib/constants";
+import { useCallback } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { api } from "@/api/client";
+import { useApi } from "@/hooks/useApi";
+import { PageHeader, Section } from "@/components/Page";
+import { ChartContainer } from "@/components/ChartContainer";
+import { ComparisonMetric } from "@/components/ComparisonMetric";
+import { EmptyState, ErrorState, LoadingState } from "@/components/States";
+import { formatCompactCurrency, formatCurrency, formatPercentFromWhole } from "@/lib/format";
+import { Zap } from "lucide-react";
+
+const TOOLTIP_STYLE = {
+  background: "#1A1A1A",
+  border: "1px solid #2A2A28",
+  fontSize: 11,
+  fontFamily: "IBM Plex Mono, monospace",
+  color: "#F5F2EA",
+};
 
 export default function Performance() {
-  const { selectedRunId, loading: runsLoading } = useEvalRun();
-  const [comparison, setComparison] = useState(null);
-  const [failures, setFailures] = useState(null);
-  const [decisions, setDecisions] = useState(null);
-  const [error, setError] = useState(null);
+  const fetcher = useCallback(() => api.getComparison(), []);
+  const { data, loading, error, refresh } = useApi(fetcher, []);
 
-  const load = useCallback(async () => {
-    if (!selectedRunId) return;
-    setError(null);
-    try {
-      const [c, f, d] = await Promise.all([
-        api.comparison({ eval_run_id: selectedRunId }),
-        api.failures({ eval_run_id: selectedRunId, system: "TRACE" }),
-        api.decisions({ eval_run_id: selectedRunId, system: "TRACE" }),
-      ]);
-      setComparison(c);
-      setFailures(f);
-      setDecisions(d);
-    } catch (e) {
-      setError(e);
-    }
-  }, [selectedRunId]);
+  const noRunYet = error && error.status === 404;
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  if (loading) return <div className="px-8 py-8"><LoadingState label="Loading performance data" /></div>;
 
-  if (runsLoading) return <AppShell title="Performance"><LoadingState label="Loading evaluation runs" /></AppShell>;
-
-  if (!selectedRunId)
+  if (noRunYet) {
     return (
-      <AppShell title="Performance" subtitle="TRACE vs Static Baseline">
-        <EmptyState label="No evaluation run yet" detail="Click “Run Evaluation” in the top bar to generate a batch comparison." />
-      </AppShell>
+      <div className="px-8 py-8">
+        <EmptyState
+          icon={Zap}
+          title="No evaluation run yet"
+          description="Run a batch evaluation from the Command Center to generate a TRACE vs Baseline comparison."
+        />
+      </div>
     );
+  }
 
-  if (error) return <AppShell title="Performance"><ErrorState message="Could not load evaluation results" detail={error.message} onRetry={load} /></AppShell>;
-  if (!comparison) return <AppShell title="Performance"><LoadingState label="Loading comparison" /></AppShell>;
+  if (error) {
+    return (
+      <div className="px-8 py-8">
+        <ErrorState description={error.message} onRetry={refresh} />
+      </div>
+    );
+  }
 
-  const t = comparison.TRACE;
-  const b = comparison.BASELINE;
+  const trace = data?.TRACE;
+  const baseline = data?.BASELINE;
+  if (!trace || !baseline) return null;
 
-  const barData = [
-    { name: "Revenue Recovered", TRACE: t.revenue_recovered, BASELINE: b.revenue_recovered },
+  const revenueChartData = [
+    { name: "Revenue at risk", Baseline: baseline.revenue_at_risk, TRACE: trace.revenue_at_risk },
+    { name: "Revenue recovered", Baseline: baseline.revenue_recovered, TRACE: trace.revenue_recovered },
   ];
-  const rateData = [
-    { name: "Recovery Rate", TRACE: t.recovery_rate * 100, BASELINE: b.recovery_rate * 100 },
-  ];
+
+  const efficiencyImproved = trace.recovery_value_per_intervention >= baseline.recovery_value_per_intervention;
 
   return (
-    <AppShell title="Performance" subtitle="Proving the case: contextual, policy-controlled recovery vs a static workflow">
-      <div className="space-y-8">
-        {/* Hero comparison: recovery value per intervention */}
-        <div className="border border-signal-orange/30 bg-signal-orange/[0.04] px-8 py-8">
-          <div className="kicker !text-signal-orange">Recovery Value Per Intervention</div>
-          <div className="mt-3 grid grid-cols-2 gap-8">
+    <div>
+      <PageHeader
+        eyebrow="Performance"
+        title="TRACE vs static baseline"
+        description="The same batch of synthetic cases, run through TRACE's contextual agent and through a fixed failure-type → action baseline."
+      />
+
+      <div className="px-8 py-8 space-y-10">
+        {/* Hero: recovery value per intervention */}
+        <Section>
+          <div className="border border-signal-orange/30 bg-signal-orange-dim/5 p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
             <div>
-              <div className="text-xs font-medium text-signal-orange">TRACE</div>
-              <div className="mono-num mt-1 text-5xl font-semibold text-obsidian">
-                {formatINR(t.recovery_value_per_intervention, { compact: true })}
+              <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-signal-orange mb-2">
+                Recovery value per intervention
               </div>
-              <div className="mt-1 text-xs text-obsidian/45">per approved recovery action</div>
+              <div className="mono-tabular text-5xl font-semibold text-bone">
+                {formatCurrency(trace.recovery_value_per_intervention)}
+              </div>
+              <div className="text-xs text-ink-faint font-mono mt-2">
+                vs {formatCurrency(baseline.recovery_value_per_intervention)} baseline
+              </div>
             </div>
-            <div>
-              <div className="text-xs font-medium text-obsidian/40">Baseline</div>
-              <div className="mono-num mt-1 text-5xl font-semibold text-obsidian/40">
-                {formatINR(b.recovery_value_per_intervention, { compact: true })}
-              </div>
-              <div className="mt-1 text-xs text-obsidian/35">per action, no context awareness</div>
+            <div
+              className={`text-sm font-mono px-4 py-2 border ${
+                efficiencyImproved
+                  ? "border-signal-mint/40 text-signal-mint bg-signal-mint-dim/10"
+                  : "border-signal-red/40 text-signal-red bg-signal-red-dim/10"
+              }`}
+            >
+              {efficiencyImproved ? "▲" : "▼"}{" "}
+              {baseline.recovery_value_per_intervention
+                ? Math.abs(
+                    ((trace.recovery_value_per_intervention - baseline.recovery_value_per_intervention) /
+                      baseline.recovery_value_per_intervention) *
+                      100
+                  ).toFixed(1)
+                : "—"}
+              % vs baseline
             </div>
           </div>
-        </div>
+        </Section>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <ChartContainer title="Revenue Recovered" sub="Simulated, same batch, matched randomness">
+        {/* Revenue comparison chart */}
+        <Section title="Revenue at risk vs recovered">
+          <ChartContainer title="Revenue (₹)" subtitle="Baseline vs TRACE, same evaluation batch">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barData} layout="vertical" margin={{ left: 12 }}>
-                <CartesianGrid strokeDasharray="2 4" stroke="#D8D4C8" horizontal={false} />
-                <XAxis type="number" tick={{ fontSize: 11, fill: "#11111180" }} axisLine={false} tickLine={false} tickFormatter={(v) => formatINR(v, { compact: true })} />
-                <YAxis type="category" dataKey="name" hide />
-                <Tooltip formatter={(v) => formatINR(v)} contentStyle={{ fontSize: 12, border: "1px solid #D8D4C8", borderRadius: 0 }} />
-                <Bar dataKey="TRACE" fill={SIGNAL.orange} barSize={28} />
-                <Bar dataKey="BASELINE" fill="#D8D4C8" barSize={28} />
+              <BarChart data={revenueChartData} barGap={6}>
+                <CartesianGrid strokeDasharray="2 4" stroke="#2A2A28" vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={{ stroke: "#2A2A28" }} tickLine={false} />
+                <YAxis tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={false} tickLine={false} tickFormatter={(v) => formatCompactCurrency(v)} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(v)} />
+                <Bar dataKey="Baseline" fill="#8A8781" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="TRACE" fill="#FF6B35" radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </ChartContainer>
+        </Section>
 
-          <ChartContainer title="Recovery Rate" sub="% of failed payments ultimately recovered">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rateData} layout="vertical" margin={{ left: 12 }}>
-                <CartesianGrid strokeDasharray="2 4" stroke="#D8D4C8" horizontal={false} />
-                <XAxis type="number" unit="%" tick={{ fontSize: 11, fill: "#11111180" }} axisLine={false} tickLine={false} />
-                <YAxis type="category" dataKey="name" hide />
-                <Tooltip formatter={(v) => `${v.toFixed(1)}%`} contentStyle={{ fontSize: 12, border: "1px solid #D8D4C8", borderRadius: 0 }} />
-                <Bar dataKey="TRACE" fill={SIGNAL.orange} barSize={28} />
-                <Bar dataKey="BASELINE" fill="#D8D4C8" barSize={28} />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartContainer>
-        </div>
-
-        {/* Full metric-by-metric comparison */}
-        <div>
-          <h2 className="mb-3 text-sm font-medium text-obsidian">Full Comparison</h2>
-          <div className="panel px-5">
-            <ComparisonMetric label="Revenue At Risk" traceValue={t.revenue_at_risk} baselineValue={b.revenue_at_risk} format={(v) => formatINR(v, { compact: true })} higherIsBetter={null} />
-            <ComparisonMetric label="Recovery Actions Taken" traceValue={t.recovery_attempts} baselineValue={b.recovery_attempts} format={formatNumber} higherIsBetter={false} />
-            <ComparisonMetric label="Transactions Recovered" traceValue={t.transactions_recovered} baselineValue={b.transactions_recovered} format={formatNumber} />
-            <ComparisonMetric label="Revenue Recovered" traceValue={t.revenue_recovered} baselineValue={b.revenue_recovered} format={(v) => formatINR(v, { compact: true })} emphasize />
-            <ComparisonMetric label="Recovery Rate" traceValue={t.recovery_rate} baselineValue={b.recovery_rate} format={(v) => formatPct(v)} />
-            <ComparisonMetric label="Unnecessary Interventions" traceValue={t.unnecessary_interventions} baselineValue={b.unnecessary_interventions} format={formatNumber} higherIsBetter={false} />
-            <ComparisonMetric label="Interventions Avoided" traceValue={t.interventions_avoided} baselineValue={b.interventions_avoided} format={formatNumber} />
-            <ComparisonMetric label="Cases Stopped" traceValue={t.cases_stopped} baselineValue={b.cases_stopped} format={formatNumber} higherIsBetter={null} />
-            <ComparisonMetric label="Cases Escalated" traceValue={t.cases_escalated} baselineValue={b.cases_escalated} format={formatNumber} higherIsBetter={null} />
-            <ComparisonMetric label="Policy-Blocked Actions" traceValue={t.policy_blocked_actions} baselineValue={b.policy_blocked_actions} format={formatNumber} higherIsBetter={null} />
+        {/* Full metric comparison */}
+        <Section title="Full evaluation comparison">
+          <div className="border border-obsidian-line bg-obsidian-soft px-4">
+            <ComparisonMetric
+              label="Total failed payments"
+              baselineValue={baseline.total_failed_payments}
+              traceValue={trace.total_failed_payments}
+              better="none"
+            />
+            <ComparisonMetric
+              label="Revenue at risk"
+              baselineValue={formatCurrency(baseline.revenue_at_risk)}
+              traceValue={formatCurrency(trace.revenue_at_risk)}
+              better="none"
+            />
+            <ComparisonMetric
+              label="Recovery actions taken"
+              baselineValue={baseline.recovery_attempts}
+              traceValue={trace.recovery_attempts}
+              better="lower"
+            />
+            <ComparisonMetric
+              label="Transactions recovered"
+              baselineValue={baseline.transactions_recovered}
+              traceValue={trace.transactions_recovered}
+              better="higher"
+            />
+            <ComparisonMetric
+              label="Revenue recovered"
+              baselineValue={formatCurrency(baseline.revenue_recovered)}
+              traceValue={formatCurrency(trace.revenue_recovered)}
+              better="higher"
+              highlight
+            />
+            <ComparisonMetric
+              label="Recovery rate"
+              baselineValue={formatPercentFromWhole(baseline.recovery_rate * 100)}
+              traceValue={formatPercentFromWhole(trace.recovery_rate * 100)}
+              better="higher"
+              highlight
+            />
+            <ComparisonMetric
+              label="Unnecessary interventions"
+              baselineValue={baseline.unnecessary_interventions}
+              traceValue={trace.unnecessary_interventions}
+              better="lower"
+            />
+            <ComparisonMetric
+              label="Interventions avoided"
+              baselineValue={baseline.interventions_avoided}
+              traceValue={trace.interventions_avoided}
+              better="higher"
+            />
+            <ComparisonMetric
+              label="Cases stopped"
+              baselineValue={baseline.cases_stopped}
+              traceValue={trace.cases_stopped}
+              better="none"
+            />
+            <ComparisonMetric
+              label="Cases escalated"
+              baselineValue={baseline.cases_escalated}
+              traceValue={trace.cases_escalated}
+              better="none"
+            />
+            <ComparisonMetric
+              label="Policy-blocked actions"
+              baselineValue={baseline.policy_blocked_actions}
+              traceValue={trace.policy_blocked_actions}
+              better="none"
+            />
+            <ComparisonMetric
+              label="Recovery value per intervention"
+              baselineValue={formatCurrency(baseline.recovery_value_per_intervention)}
+              traceValue={formatCurrency(trace.recovery_value_per_intervention)}
+              better="higher"
+              highlight
+            />
           </div>
-          {t.revenue_recovered_is_simulated && (
-            <p className="mt-2 text-[11px] text-obsidian/35">
-              Revenue figures above are from a simulated batch evaluation — clearly labeled, never presented as real settled funds.
-            </p>
-          )}
-        </div>
+        </Section>
 
-        {/* Supporting breakdowns */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <ChartContainer title="Revenue At Risk By Failure Type" height={280}>
-            {failures?.by_failure_type?.length ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={failures.by_failure_type.map((f) => ({ ...f, label: FAILURE_LABEL[f.failure_type] || f.failure_type }))} margin={{ left: 4 }}>
-                  <CartesianGrid strokeDasharray="2 4" stroke="#D8D4C8" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: "#11111180" }} axisLine={false} tickLine={false} interval={0} angle={-20} textAnchor="end" height={50} />
-                  <YAxis tick={{ fontSize: 11, fill: "#11111180" }} axisLine={false} tickLine={false} tickFormatter={(v) => formatINR(v, { compact: true })} />
-                  <Tooltip formatter={(v) => formatINR(v)} contentStyle={{ fontSize: 12, border: "1px solid #D8D4C8", borderRadius: 0 }} />
-                  <Bar dataKey="revenue_at_risk" radius={0}>
-                    {failures.by_failure_type.map((_, i) => (
-                      <Cell key={i} fill={SIGNAL.orange} fillOpacity={1 - i * 0.12} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <EmptyState label="No data" />
-            )}
-          </ChartContainer>
-
-          <ChartContainer title="TRACE Actions Selected" height={280}>
-            {decisions?.actions_selected?.length ? (
-              <div className="flex h-full flex-col justify-center gap-3 px-3">
-                {[...decisions.actions_selected]
-                  .sort((a, b2) => b2.count - a.count)
-                  .map((a) => {
-                    const max = Math.max(...decisions.actions_selected.map((x) => x.count));
-                    return (
-                      <div key={a.action}>
-                        <div className="mb-1 flex items-center justify-between text-xs">
-                          <span className="text-obsidian/70">{ACTION_LABEL[a.action] || a.action}</span>
-                          <span className="mono-num text-obsidian/45">{a.count}</span>
-                        </div>
-                        <div className="h-1.5 w-full bg-mist">
-                          <div className="h-1.5" style={{ width: `${(a.count / max) * 100}%`, backgroundColor: SIGNAL.orange }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-              </div>
-            ) : (
-              <EmptyState label="No data" />
-            )}
-          </ChartContainer>
+        <div className="text-[11px] font-mono text-ink-faint">
+          Revenue figures are simulated financial outcomes from the evaluation harness, not real transactions.
         </div>
       </div>
-    </AppShell>
+    </div>
   );
 }

@@ -1,175 +1,116 @@
-import { useEffect, useState, useCallback } from "react";
-import { ShieldCheck, ShieldX, ShieldAlert, ArrowRight } from "lucide-react";
-import AppShell from "../components/shell/AppShell";
-import { LoadingState, ErrorState, EmptyState } from "../components/common/States";
-import { useEvalRun } from "../lib/EvalRunContext";
-import { api } from "../lib/api";
-import { formatNumber } from "../lib/format";
-import { SIGNAL, ACTION_LABEL } from "../lib/constants";
+import { useCallback } from "react";
+import { ShieldCheck, ShieldX, ShieldAlert, Fingerprint } from "lucide-react";
+import { api } from "@/api/client";
+import { useApi } from "@/hooks/useApi";
+import { PageHeader, Section } from "@/components/Page";
+import { KpiBlock } from "@/components/KpiBlock";
+import { PolicyControlFlow } from "@/components/PolicyControlFlow";
+import { ErrorState, LoadingState } from "@/components/States";
+import { ACTION_LABELS } from "@/lib/domain";
 
-// Mirrors the defaults in backend/.env.example — the API does not currently
-// expose a live settings endpoint, so these are shown as configured
-// reference values, not live-fetched data.
-const POLICY_RULES = [
-  { label: "Maximum Recovery Attempts", value: "3", note: "per case, across all actions" },
-  { label: "Recovery Window", value: "4,320 min (3 days)", note: "from first failure to forced stop" },
-  { label: "Max Same-Action Repeats", value: "1", note: "never hammer the same action indefinitely" },
-  { label: "High-Value Threshold", value: "₹50,000", note: "requires review before auto-closing" },
-  { label: "Policy Confidence Floor", value: "0.40", note: "below this → flagged for review, not autonomy" },
-  { label: "Reassessment Iteration Bound", value: "4", note: "hard cap — never an unbounded loop" },
-];
-
-const ALLOWED_ACTIONS = [
-  "RETRY_PAYMENT",
-  "SEND_RECOVERY_LINK",
-  "SUGGEST_ALTERNATIVE_METHOD",
-  "WAIT_AND_REASSESS",
-  "ESCALATE_FOR_REVIEW",
-  "STOP_RECOVERY",
-];
-
-const FLOW_STEPS = [
-  { key: "request", label: "TRACE Request", color: SIGNAL.orange },
-  { key: "check", label: "Policy Check", color: "#111111" },
-  { key: "result", label: "Approved / Blocked / Review", color: null },
-  { key: "exec", label: "Execution", color: "#111111" },
-];
+const RULE_ICON = { APPROVED: ShieldCheck, BLOCKED: ShieldX, FLAGGED_FOR_REVIEW: ShieldAlert };
+const RULE_COLOR = {
+  APPROVED: "text-signal-mint",
+  BLOCKED: "text-signal-red",
+  FLAGGED_FOR_REVIEW: "text-signal-amber",
+};
 
 export default function PolicyControlCenter() {
-  const { selectedRunId, loading: runsLoading } = useEvalRun();
-  const [decisions, setDecisions] = useState(null);
-  const [error, setError] = useState(null);
-
-  const load = useCallback(async () => {
-    if (!selectedRunId) return;
-    setError(null);
-    try {
-      const d = await api.decisions({ eval_run_id: selectedRunId, system: "TRACE" });
-      setDecisions(d);
-    } catch (e) {
-      setError(e);
-    }
-  }, [selectedRunId]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const policyCounts = { APPROVED: 0, BLOCKED: 0, FLAGGED_FOR_REVIEW: 0 };
-  decisions?.policy_results?.forEach((p) => {
-    policyCounts[p.result] = p.count;
-  });
-  const totalChecks = Object.values(policyCounts).reduce((a, b) => a + b, 0);
+  const fetcher = useCallback(() => api.getPolicyConfig(), []);
+  const { data: config, loading, error, refresh } = useApi(fetcher, []);
 
   return (
-    <AppShell title="Policy Control Center" subtitle="Agent decides. Policy controls. — 100% deterministic, zero LLM dependency">
-      <div className="space-y-8">
-        {/* Flow diagram */}
-        <div className="panel px-8 py-8">
-          <div className="kicker mb-6">Control Flow</div>
-          <div className="flex items-center justify-between">
-            {FLOW_STEPS.map((step, i) => (
-              <div key={step.key} className="flex flex-1 items-center">
-                <div className="flex flex-1 flex-col items-center gap-2 text-center">
-                  {step.key === "result" ? (
-                    <div className="flex gap-4">
-                      <MiniShield icon={ShieldCheck} color={SIGNAL.mint} label="Approved" />
-                      <MiniShield icon={ShieldX} color={SIGNAL.red} label="Blocked" />
-                      <MiniShield icon={ShieldAlert} color={SIGNAL.amber} label="Review" />
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex h-10 w-10 items-center justify-center border-2" style={{ borderColor: step.color }}>
-                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: step.color }} />
-                      </div>
-                      <span className="text-xs font-medium text-obsidian">{step.label}</span>
-                    </>
-                  )}
+    <div>
+      <PageHeader
+        eyebrow="Policy & control"
+        title="The control layer"
+        description="TRACE decides. Policy controls. Every guardrail here is deterministic and runs independently of the LLM."
+      />
+
+      <div className="px-8 py-8 space-y-10">
+        {loading && <LoadingState label="Loading policy configuration" />}
+        {error && <ErrorState description={error.message} onRetry={refresh} />}
+
+        {config && (
+          <>
+            <Section title="Control flow">
+              <PolicyControlFlow />
+            </Section>
+
+            <Section title="Guardrail thresholds">
+              <div className="border border-obsidian-line bg-obsidian-soft p-6 grid grid-cols-2 md:grid-cols-4 gap-8">
+                <KpiBlock label="Max recovery attempts" value={config.max_recovery_attempts} />
+                <KpiBlock
+                  label="Recovery window"
+                  value={`${Math.round(config.recovery_window_minutes / 60)}h`}
+                  sublabel={`${config.recovery_window_minutes} minutes`}
+                />
+                <KpiBlock label="Max same-action repeats" value={config.max_same_action_repeats} />
+                <KpiBlock
+                  label="High-value threshold"
+                  value={`₹${Number(config.high_value_threshold).toLocaleString("en-IN")}`}
+                />
+                <KpiBlock label="Policy confidence floor" value={config.policy_min_confidence} />
+                <KpiBlock label="Agent confidence floor" value={config.agent_min_confidence} />
+                <KpiBlock label="Max reassessment iterations" value={config.max_reassessment_iterations} />
+                <KpiBlock label="Agent mode" value={config.agent_mode} signal="orange" />
+              </div>
+            </Section>
+
+            <Section title="Duplicate event protection">
+              <div className="border border-obsidian-line bg-obsidian-soft p-6 flex items-start gap-4">
+                <Fingerprint className="w-5 h-5 text-signal-orange shrink-0 mt-0.5" strokeWidth={1.5} />
+                <div>
+                  <div className="text-sm text-bone font-medium mb-1">
+                    Every payment ID may only ever create one recovery case
+                  </div>
+                  <p className="text-xs text-ink-faint leading-relaxed max-w-2xl">
+                    If the same payment event arrives again, TRACE does not create a duplicate case,
+                    rerun the agent, resend a recovery email, or re-execute the same action. The event
+                    is logged as a duplicate and linked back to the existing audit record.
+                  </p>
                 </div>
-                {i < FLOW_STEPS.length - 1 && <ArrowRight size={16} className="mx-2 shrink-0 text-obsidian/25" />}
               </div>
-            ))}
-          </div>
-        </div>
+            </Section>
 
-        {/* Policy thresholds */}
-        <div>
-          <h2 className="mb-3 text-sm font-medium text-obsidian">Configured Guardrails</h2>
-          <div className="panel grid grid-cols-1 divide-y divide-mist-dark/70 md:grid-cols-2 md:divide-y-0">
-            {POLICY_RULES.map((rule, i) => (
-              <div key={rule.label} className={`px-5 py-4 ${i % 2 === 0 ? "md:border-r md:border-mist-dark/70" : ""} ${i < POLICY_RULES.length - 2 ? "md:border-b md:border-mist-dark/70" : ""}`}>
-                <div className="kicker">{rule.label}</div>
-                <div className="mono-num mt-1 text-lg font-semibold text-obsidian">{rule.value}</div>
-                <div className="mt-0.5 text-xs text-obsidian/45">{rule.note}</div>
+            <Section title="Allowed actions (bounded action space)">
+              <div className="flex flex-wrap gap-2">
+                {config.allowed_actions.map((a) => (
+                  <span
+                    key={a}
+                    className="text-xs font-mono px-3 py-1.5 border border-obsidian-line text-bone bg-obsidian-soft"
+                  >
+                    {ACTION_LABELS[a] || a}
+                  </span>
+                ))}
               </div>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-obsidian/35">Reference values from backend configuration — adjust via .env.</p>
-        </div>
+              <p className="text-xs text-ink-faint mt-3 max-w-2xl">
+                TRACE can never invent a new action, change a transaction amount, move real money, or
+                contact a customer outside these approved paths.
+              </p>
+            </Section>
 
-        {/* Allowed action space */}
-        <div>
-          <h2 className="mb-3 text-sm font-medium text-obsidian">Bounded Action Space</h2>
-          <p className="mb-3 text-xs text-obsidian/45">TRACE can never select an action outside this fixed set — no free-form behavior.</p>
-          <div className="flex flex-wrap gap-2">
-            {ALLOWED_ACTIONS.map((a) => (
-              <span key={a} className="border border-mist-dark px-3 py-1.5 font-mono text-xs text-obsidian/75">
-                {ACTION_LABEL[a]}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* Live policy outcomes for the selected evaluation run */}
-        <div>
-          <h2 className="mb-3 text-sm font-medium text-obsidian">Policy Outcomes — Selected Evaluation Run</h2>
-          {runsLoading && <LoadingState label="Loading runs" />}
-          {!runsLoading && !selectedRunId && <EmptyState label="No evaluation run yet" detail="Run an evaluation from the top bar to see live policy check outcomes." />}
-          {error && <ErrorState message="Could not load policy outcomes" detail={error.message} onRetry={load} />}
-          {selectedRunId && !error && !decisions && <LoadingState label="Loading policy checks" />}
-
-          {decisions && totalChecks > 0 && (
-            <div className="grid grid-cols-3 gap-4">
-              <PolicyStat icon={ShieldCheck} color={SIGNAL.mint} label="Approved" count={policyCounts.APPROVED} total={totalChecks} />
-              <PolicyStat icon={ShieldAlert} color={SIGNAL.amber} label="Flagged for Review" count={policyCounts.FLAGGED_FOR_REVIEW} total={totalChecks} />
-              <PolicyStat icon={ShieldX} color={SIGNAL.red} label="Blocked" count={policyCounts.BLOCKED} total={totalChecks} />
-            </div>
-          )}
-          {decisions && totalChecks === 0 && <EmptyState label="No policy checks recorded for this run" />}
-        </div>
+            <Section title="Escalation & stopping rules">
+              <div className="border border-obsidian-line bg-obsidian-soft divide-y divide-obsidian-line">
+                {config.rules.map((rule) => {
+                  const Icon = RULE_ICON[rule.result] || ShieldAlert;
+                  return (
+                    <div key={rule.id} className="flex items-start gap-3 p-4">
+                      <Icon className={`w-4 h-4 shrink-0 mt-0.5 ${RULE_COLOR[rule.result]}`} strokeWidth={1.5} />
+                      <div className="flex-1">
+                        <p className="text-sm text-bone">{rule.description}</p>
+                      </div>
+                      <span className={`text-[10px] font-mono uppercase tracking-wide shrink-0 ${RULE_COLOR[rule.result]}`}>
+                        {rule.result.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </Section>
+          </>
+        )}
       </div>
-    </AppShell>
-  );
-}
-
-function MiniShield({ icon: Icon, color, label }) {
-  return (
-    <div className="flex flex-col items-center gap-1.5">
-      <div className="flex h-9 w-9 items-center justify-center border-2" style={{ borderColor: color }}>
-        <Icon size={14} style={{ color }} strokeWidth={2} />
-      </div>
-      <span className="text-[10px] font-medium" style={{ color }}>
-        {label}
-      </span>
-    </div>
-  );
-}
-
-function PolicyStat({ icon: Icon, color, label, count, total }) {
-  const pct = total ? (count / total) * 100 : 0;
-  return (
-    <div className="border border-mist-dark/70 px-5 py-4">
-      <div className="flex items-center gap-2">
-        <Icon size={14} style={{ color }} strokeWidth={1.75} />
-        <span className="kicker">{label}</span>
-      </div>
-      <div className="mono-num mt-2 text-2xl font-semibold" style={{ color }}>
-        {formatNumber(count)}
-      </div>
-      <div className="mt-2 h-1 w-full bg-mist">
-        <div className="h-1" style={{ width: `${pct}%`, backgroundColor: color }} />
-      </div>
-      <div className="mt-1.5 text-[11px] text-obsidian/40">{pct.toFixed(1)}% of checks</div>
     </div>
   );
 }
