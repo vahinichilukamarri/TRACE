@@ -76,7 +76,13 @@ def execute_action(db: Session, case: RecoveryCase, action: str, rng: random.Ran
 
     if action_enum in (ActionType.SEND_RECOVERY_LINK, ActionType.SUGGEST_ALTERNATIVE_METHOD):
         kind = "alternative_method" if action_enum == ActionType.SUGGEST_ALTERNATIVE_METHOD else "recovery_link"
-        email_result = send_recovery_email(customer_email, case.payment_id, case.amount, kind=kind)
+        email_result = send_recovery_email(
+            customer_email, case.payment_id, case.amount, kind=kind,
+            currency=case.currency,
+            failure_type=case.failure_type,
+            remaining_recovery_opportunities=case.remaining_recovery_opportunities,
+            previous_recovery_attempts=case.previous_recovery_attempts,
+        )
         execution = ExecutionRecord(
             case_id=case.id, action=action,
             execution_type=ExecutionType.REAL.value if email_result["delivery"] == "REAL" else ExecutionType.SIMULATED.value,
