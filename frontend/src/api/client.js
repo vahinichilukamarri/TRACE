@@ -76,6 +76,8 @@ export const api = {
   },
   getComparison: (evalRunId) =>
     request(`/dashboard/comparison${evalRunId ? `?eval_run_id=${evalRunId}` : ""}`),
+  getFrontier: (evalRunId) =>
+    request(`/dashboard/frontier${evalRunId ? `?eval_run_id=${evalRunId}` : ""}`),
 
   // ---- Policy ----
   getPolicyConfig: () => request(`/policy/config`),

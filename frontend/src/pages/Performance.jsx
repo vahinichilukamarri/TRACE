@@ -1,5 +1,16 @@
 import { useCallback } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  Legend,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader, Section } from "@/components/Page";
@@ -20,6 +31,9 @@ const TOOLTIP_STYLE = {
 export default function Performance() {
   const fetcher = useCallback(() => api.getComparison(), []);
   const { data, loading, error, refresh } = useApi(fetcher, []);
+
+  const frontierFetcher = useCallback(() => api.getFrontier(), []);
+  const { data: frontier } = useApi(frontierFetcher, []);
 
   const noRunYet = error && error.status === 404;
 
@@ -114,6 +128,62 @@ export default function Performance() {
             </ResponsiveContainer>
           </ChartContainer>
         </Section>
+
+        {/* Recovery efficiency frontier */}
+        {frontier?.TRACE && frontier?.BASELINE && (
+          <Section title="Recovery efficiency frontier">
+            <p className="text-xs text-ink-faint leading-relaxed max-w-3xl mb-4">
+              Cumulative revenue recovered as interventions accumulate, with each system's
+              best-value cases spent first. A curve that climbs faster per intervention is
+              recovering more revenue for the same amount of effort — the visual proof of TRACE's
+              "maximize intelligent effort, not attempt count" thesis.
+            </p>
+            <ChartContainer
+              title="Cumulative revenue recovered (₹)"
+              subtitle="By cumulative interventions — best value density first"
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart>
+                  <CartesianGrid strokeDasharray="2 4" stroke="#2A2A28" vertical={false} />
+                  <XAxis
+                    type="number"
+                    dataKey="interventions"
+                    domain={["dataMin", "dataMax"]}
+                    tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }}
+                    axisLine={{ stroke: "#2A2A28" }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => formatCompactCurrency(v)}
+                  />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(v)} />
+                  <Legend wrapperStyle={{ fontSize: 11, fontFamily: "IBM Plex Mono" }} />
+                  <Line
+                    data={frontier.BASELINE}
+                    dataKey="revenue_recovered"
+                    name="Baseline"
+                    stroke="#8A8781"
+                    type="stepAfter"
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    data={frontier.TRACE}
+                    dataKey="revenue_recovered"
+                    name="TRACE"
+                    stroke="#FF6B35"
+                    type="stepAfter"
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </Section>
+        )}
 
         {/* Full metric comparison */}
         <Section title="Full evaluation comparison">

@@ -9,6 +9,8 @@ from fastapi import APIRouter
 
 from app.config import settings
 from app.enums import ActionType
+from app.policy import RECOVERY_WINDOW_BY_FAILURE_TYPE
+from app.agent import INTERVENTION_COST, DIRECT_RECOVERY_ACTIONS
 
 router = APIRouter(prefix="/policy", tags=["policy"])
 
@@ -25,6 +27,26 @@ def get_policy_config():
         "max_reassessment_iterations": settings.MAX_REASSESSMENT_ITERATIONS,
         "agent_mode": settings.AGENT_MODE,
         "allowed_actions": [a.value for a in ActionType],
+        "recovery_window_overrides": {
+            "by_failure_type": RECOVERY_WINDOW_BY_FAILURE_TYPE,
+            "note": (
+                "NPCI mandates auto-reversal of most failed UPI transactions within ~60 minutes. "
+                "BANK_TIMEOUT is TRACE's proxy for a bank / UPI-rail failure, so once that window "
+                "passes the money has already been reversed to the customer and continued automated "
+                "recovery is moot. All other failure types have no equivalent regulatory "
+                f"auto-reversal and keep the default {settings.RECOVERY_WINDOW_MINUTES}-minute window."
+            ),
+        },
+        "intervention_costs": {
+            "by_action": {action.value: cost for action, cost in INTERVENTION_COST.items()},
+            "direct_recovery_actions": [a.value for a in DIRECT_RECOVERY_ACTIONS],
+            "note": (
+                "Only direct-recovery actions (retry payment, send recovery link, suggest "
+                "alternative method) actually attempt to complete the payment on this turn, so "
+                "only they earn an expected recovery value. WAIT_AND_REASSESS / ESCALATE_FOR_REVIEW "
+                "/ STOP_RECOVERY carry their cost with no offsetting expected value."
+            ),
+        },
         "rules": [
             {
                 "id": "already_recovered",
@@ -38,7 +60,12 @@ def get_policy_config():
             },
             {
                 "id": "recovery_window_expired",
-                "description": f"Time since failure exceeds the {settings.RECOVERY_WINDOW_MINUTES}-minute recovery window -> forced STOP_RECOVERY.",
+                "description": (
+                    f"Time since failure exceeds the recovery window "
+                    f"({settings.RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT} minutes for BANK_TIMEOUT, "
+                    f"{settings.RECOVERY_WINDOW_MINUTES} minutes for all other failure types) "
+                    f"-> forced STOP_RECOVERY."
+                ),
                 "result": "BLOCKED",
             },
             {

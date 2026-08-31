@@ -37,6 +37,9 @@ class AgentDecisionOut(BaseModel):
     agent_mode: str
     is_fallback: bool
     iteration: int
+    expected_value: Optional[float] = None
+    intervention_cost: Optional[float] = None
+    net_expected_value: Optional[float] = None
     created_at: datetime
 
     class Config:

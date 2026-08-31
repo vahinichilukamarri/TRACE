@@ -38,6 +38,40 @@ export function DecisionPanel({ decision }) {
         {ACTION_LABELS[decision.action] || decision.action}
       </div>
 
+      {decision.net_expected_value != null && (
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="bg-obsidian border border-obsidian-line p-2">
+            <div className="text-[10px] font-mono uppercase tracking-[0.08em] text-ink-faint mb-1">
+              Expected value
+            </div>
+            <div className="mono-tabular text-sm text-bone">
+              ₹{Number(decision.expected_value).toLocaleString("en-IN")}
+            </div>
+          </div>
+          <div className="bg-obsidian border border-obsidian-line p-2">
+            <div className="text-[10px] font-mono uppercase tracking-[0.08em] text-ink-faint mb-1">
+              Intervention cost
+            </div>
+            <div className="mono-tabular text-sm text-bone">
+              −₹{Number(decision.intervention_cost).toLocaleString("en-IN")}
+            </div>
+          </div>
+          <div className="bg-obsidian border border-obsidian-line p-2">
+            <div className="text-[10px] font-mono uppercase tracking-[0.08em] text-ink-faint mb-1">
+              Net expected value
+            </div>
+            <div
+              className={`mono-tabular text-sm ${
+                decision.net_expected_value >= 0 ? "text-signal-mint" : "text-signal-red"
+              }`}
+            >
+              {decision.net_expected_value >= 0 ? "+" : "−"}₹
+              {Number(Math.abs(decision.net_expected_value)).toLocaleString("en-IN")}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="text-xs font-mono text-ink-faint mb-1">Reasoning</div>
       <p className="text-sm text-bone leading-relaxed">{decision.reasoning}</p>
 

@@ -108,6 +108,9 @@ class AgentDecisionRecord(Base):
     agent_mode = Column(String, nullable=False)       # HEURISTIC | LLM
     is_fallback = Column(Boolean, default=False)
     iteration = Column(Integer, default=0)            # 0 = first decision, 1+ = reassessment
+    expected_value = Column(Float, nullable=True)          # amount * estimated recovery probability (INR)
+    intervention_cost = Column(Float, nullable=True)       # rough operating cost of the chosen action (INR)
+    net_expected_value = Column(Float, nullable=True)      # expected_value - intervention_cost (INR)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     case = relationship("RecoveryCase", back_populates="decisions")

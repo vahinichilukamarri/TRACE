@@ -41,9 +41,9 @@ export default function PolicyControlCenter() {
               <div className="border border-obsidian-line bg-obsidian-soft p-6 grid grid-cols-2 md:grid-cols-4 gap-8">
                 <KpiBlock label="Max recovery attempts" value={config.max_recovery_attempts} />
                 <KpiBlock
-                  label="Recovery window"
+                  label="Default recovery window"
                   value={`${Math.round(config.recovery_window_minutes / 60)}h`}
-                  sublabel={`${config.recovery_window_minutes} minutes`}
+                  sublabel={`${config.recovery_window_minutes} minutes · per-failure-type overrides below`}
                 />
                 <KpiBlock label="Max same-action repeats" value={config.max_same_action_repeats} />
                 <KpiBlock
@@ -56,6 +56,82 @@ export default function PolicyControlCenter() {
                 <KpiBlock label="Agent mode" value={config.agent_mode} signal="orange" />
               </div>
             </Section>
+
+            {config.recovery_window_overrides && (
+              <Section title="Recovery windows by failure type">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {Object.entries(config.recovery_window_overrides.by_failure_type || {}).map(
+                    ([failureType, minutes]) => (
+                      <div
+                        key={failureType}
+                        className="border border-signal-amber/40 bg-signal-amber-dim/10 p-4"
+                      >
+                        <div className="text-[11px] font-mono uppercase tracking-[0.1em] text-signal-amber mb-1">
+                          {failureType.replace(/_/g, " ")}
+                        </div>
+                        <div className="mono-tabular text-2xl font-semibold text-bone leading-none">
+                          {Math.round(minutes / 60)}h
+                        </div>
+                        <div className="text-xs text-ink-faint font-mono mt-1">{minutes} minutes</div>
+                      </div>
+                    )
+                  )}
+                  <div className="border border-obsidian-line bg-obsidian-soft p-4">
+                    <div className="text-[11px] font-mono uppercase tracking-[0.1em] text-ink-faint mb-1">
+                      All other failure types
+                    </div>
+                    <div className="mono-tabular text-2xl font-semibold text-bone leading-none">
+                      {Math.round(config.recovery_window_minutes / 60)}h
+                    </div>
+                    <div className="text-xs text-ink-faint font-mono mt-1">
+                      {config.recovery_window_minutes} minutes
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-ink-faint leading-relaxed max-w-3xl mt-3">
+                  {config.recovery_window_overrides.note}
+                </p>
+              </Section>
+            )}
+
+            {config.intervention_costs && (
+              <Section title="Intervention economics">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {Object.entries(config.intervention_costs.by_action || {}).map(([action, cost]) => {
+                    const isDirect = (
+                      config.intervention_costs.direct_recovery_actions || []
+                    ).includes(action);
+                    return (
+                      <div
+                        key={action}
+                        className={`border p-4 ${
+                          isDirect
+                            ? "border-signal-orange/40 bg-signal-orange-dim/5"
+                            : "border-obsidian-line bg-obsidian-soft"
+                        }`}
+                      >
+                        <div className="text-sm text-bone font-medium mb-1">
+                          {ACTION_LABELS[action] || action}
+                        </div>
+                        <div className="mono-tabular text-lg font-semibold text-bone leading-none">
+                          ₹{Number(cost).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+                        </div>
+                        <div
+                          className={`text-[10px] font-mono uppercase tracking-wide mt-1.5 ${
+                            isDirect ? "text-signal-orange" : "text-ink-faint"
+                          }`}
+                        >
+                          {isDirect ? "earns expected value" : "cost only"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-ink-faint leading-relaxed max-w-3xl mt-3">
+                  {config.intervention_costs.note}
+                </p>
+              </Section>
+            )}
 
             <Section title="Duplicate event protection">
               <div className="border border-obsidian-line bg-obsidian-soft p-6 flex items-start gap-4">

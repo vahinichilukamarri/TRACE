@@ -38,6 +38,31 @@ class AgentDecisionResult:
     agent_mode: AgentMode
     is_fallback: bool = False
     raw: dict = field(default_factory=dict)
+    expected_value: float = 0.0
+    intervention_cost: float = 0.0
+    net_expected_value: float = 0.0
+
+
+# Only these actions directly attempt to recover the payment on this turn.
+# WAIT_AND_REASSESS / ESCALATE_FOR_REVIEW / STOP_RECOVERY don't recover
+# anything themselves, so they never earn an expected recovery value.
+DIRECT_RECOVERY_ACTIONS = {
+    ActionType.RETRY_PAYMENT,
+    ActionType.SEND_RECOVERY_LINK,
+    ActionType.SUGGEST_ALTERNATIVE_METHOD,
+}
+
+# Rough per-action operating cost in INR (email send, gateway retry fee,
+# human review time for escalation). Used to turn a raw expected recovery
+# value into a *net* expected value the policy/audit layer can reason about.
+INTERVENTION_COST = {
+    ActionType.RETRY_PAYMENT: 0.50,
+    ActionType.SEND_RECOVERY_LINK: 2.0,
+    ActionType.SUGGEST_ALTERNATIVE_METHOD: 2.0,
+    ActionType.WAIT_AND_REASSESS: 0.0,
+    ActionType.ESCALATE_FOR_REVIEW: 150.0,
+    ActionType.STOP_RECOVERY: 0.0,
+}
 
 
 # ---------------------------------------------------------------------
@@ -275,6 +300,47 @@ def _llm_failure_fallback() -> AgentDecisionResult:
 
 
 # ---------------------------------------------------------------------
+# Expected-value economics (engine-agnostic)
+# ---------------------------------------------------------------------
+
+def _estimate_probability(context: dict, action: ActionType) -> float:
+    """Deterministic recovery-probability estimate for ANY action, using the
+    exact blended-probability formula the heuristic scoring loop uses
+    internally. Kept as a standalone function so "expected value" is
+    reproducible and auditable regardless of whether the heuristic engine or
+    the LLM produced the decision -- it is never just another model output."""
+    failure_type = FailureType(context["failure_type"])
+    success_rate = context.get("customer_success_rate") or 0.0
+    prev_attempts = context.get("previous_recovery_attempts") or 0
+
+    base_fit = _ACTION_FIT.get(failure_type, {}).get(action, 0.0)
+    probability = (
+        base_fit
+        * (0.4 + 0.6 * success_rate)
+        * max(0.3, 1 - 0.2 * prev_attempts)
+    )
+    return min(max(probability, 0.02), 0.95)
+
+
+def _attach_expected_value(context: dict, result: AgentDecisionResult) -> None:
+    """Populates expected_value / intervention_cost / net_expected_value on a
+    decision result. Runs for every decision, whatever engine produced it."""
+    cost = INTERVENTION_COST.get(result.action, 0.0)
+
+    if result.action not in DIRECT_RECOVERY_ACTIONS:
+        result.expected_value = 0.0
+        result.intervention_cost = round(cost, 2)
+        result.net_expected_value = round(-cost, 2)
+        return
+
+    probability = _estimate_probability(context, result.action)
+    expected_value = (context.get("amount") or 0.0) * probability
+    result.expected_value = round(expected_value, 2)
+    result.intervention_cost = round(cost, 2)
+    result.net_expected_value = round(expected_value - cost, 2)
+
+
+# ---------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------
 
@@ -283,6 +349,9 @@ def decide(context: dict, mode: str | None = None) -> AgentDecisionResult:
     if mode == AgentMode.LLM.value:
         result = _llm_decide(context)
         if result is None:
-            return _llm_failure_fallback()
-        return result
-    return _heuristic_decide(context)
+            result = _llm_failure_fallback()
+    else:
+        result = _heuristic_decide(context)
+
+    _attach_expected_value(context, result)
+    return result

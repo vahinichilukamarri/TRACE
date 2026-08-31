@@ -12,6 +12,18 @@ from dataclasses import dataclass, field
 from app.enums import ActionType, PolicyResult
 from app.config import settings
 
+# Per-failure-type recovery-window overrides. BANK_TIMEOUT uses a much
+# shorter window because the UPI rail auto-reverses those transactions
+# within ~60 minutes (NPCI mandate); anything not listed here falls back to
+# the flat RECOVERY_WINDOW_MINUTES default.
+RECOVERY_WINDOW_BY_FAILURE_TYPE = {
+    "BANK_TIMEOUT": settings.RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT,
+}
+
+
+def _recovery_window_minutes(failure_type: str | None) -> int:
+    return RECOVERY_WINDOW_BY_FAILURE_TYPE.get(failure_type, settings.RECOVERY_WINDOW_MINUTES)
+
 
 @dataclass
 class PolicyCheckResult:
@@ -44,12 +56,13 @@ def check_policy(case_context: dict, proposed_action: str, confidence: float,
             reasons=[f"Case status is {case_context['status']}; no further automated action permitted."],
         )
 
-    # 2. Recovery window expired
-    if case_context["time_since_failure_minutes"] > settings.RECOVERY_WINDOW_MINUTES:
+    # 2. Recovery window expired (per-failure-type: BANK_TIMEOUT is shorter)
+    window_minutes = _recovery_window_minutes(case_context.get("failure_type"))
+    if case_context["time_since_failure_minutes"] > window_minutes:
         return PolicyCheckResult(
             result=PolicyResult.BLOCKED,
             reasons=[
-                f"Recovery window of {settings.RECOVERY_WINDOW_MINUTES} minutes has expired "
+                f"Recovery window of {window_minutes} minutes has expired "
                 f"({case_context['time_since_failure_minutes']} minutes elapsed)."
             ],
             final_action=ActionType.STOP_RECOVERY.value,

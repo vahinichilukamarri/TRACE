@@ -26,6 +26,13 @@ class Settings:
     # --- Policy ---
     MAX_RECOVERY_ATTEMPTS: int = int(os.getenv("MAX_RECOVERY_ATTEMPTS", "3"))
     RECOVERY_WINDOW_MINUTES: int = int(os.getenv("RECOVERY_WINDOW_MINUTES", "4320"))  # 3 days
+    # NPCI mandates auto-reversal of most failed UPI transactions within ~60
+    # minutes. BANK_TIMEOUT is our proxy for a bank / UPI-rail failure, so
+    # continuing automated recovery past that point is moot -- the money has
+    # already been reversed to the customer by the rail itself. Every other
+    # failure type keeps the 3-day default above, since none of them has an
+    # equivalent regulatory auto-reversal.
+    RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT: int = int(os.getenv("RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT", "60"))
     MAX_SAME_ACTION_REPEATS: int = int(os.getenv("MAX_SAME_ACTION_REPEATS", "1"))
     HIGH_VALUE_THRESHOLD: float = float(os.getenv("HIGH_VALUE_THRESHOLD", "50000"))
     POLICY_MIN_CONFIDENCE: float = float(os.getenv("POLICY_MIN_CONFIDENCE", "0.4"))
