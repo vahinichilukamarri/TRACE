@@ -78,6 +78,10 @@ def execute_action(db: Session, case: RecoveryCase, action: str, rng: random.Ran
         kind = "alternative_method" if action_enum == ActionType.SUGGEST_ALTERNATIVE_METHOD else "recovery_link"
         email_result = send_recovery_email(
             customer_email, case.payment_id, case.amount, kind=kind,
+            # Real delivery only when someone deliberately set a real address on
+            # the case; the generated customer+<id>@example.com placeholder is
+            # never mailed for real.
+            allow_real_send=bool(case.customer_email),
             currency=case.currency,
             failure_type=case.failure_type,
             remaining_recovery_opportunities=case.remaining_recovery_opportunities,

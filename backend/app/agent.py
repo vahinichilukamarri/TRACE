@@ -256,7 +256,9 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
         return None
     try:
         from groq import Groq
-        client = Groq(api_key=settings.GROQ_API_KEY)
+        # Bounded like the classifier: never let a slow/retrying API call stall
+        # the request and hold the DB write transaction open.
+        client = Groq(api_key=settings.GROQ_API_KEY, timeout=15.0, max_retries=0)
         user_prompt = "Recovery case context:\n" + json.dumps(context, indent=2)
         resp = client.chat.completions.create(
             model=settings.GROQ_MODEL,

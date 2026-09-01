@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -15,6 +15,7 @@ import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader, Section } from "@/components/Page";
 import { ChartContainer } from "@/components/ChartContainer";
+import { RunSelector } from "@/components/RunSelector";
 import { ComparisonMetric } from "@/components/ComparisonMetric";
 import { EmptyState, ErrorState, LoadingState } from "@/components/States";
 import { formatCompactCurrency, formatCurrency, formatPercentFromWhole } from "@/lib/format";
@@ -29,11 +30,24 @@ const TOOLTIP_STYLE = {
 };
 
 export default function Performance() {
-  const fetcher = useCallback(() => api.getComparison(), []);
-  const { data, loading, error, refresh } = useApi(fetcher, []);
+  const [selectedRun, setSelectedRun] = useState(null);
 
-  const frontierFetcher = useCallback(() => api.getFrontier(), []);
-  const { data: frontier } = useApi(frontierFetcher, []);
+  // Default the view to the most recent run once the runs list loads.
+  const runsFetcher = useCallback(() => api.listEvaluationRuns(1), []);
+  const { data: latestRun } = useApi(runsFetcher, []);
+  useEffect(() => {
+    if (selectedRun == null && latestRun && latestRun.length > 0) {
+      setSelectedRun(latestRun[0].run_id);
+    }
+  }, [latestRun, selectedRun]);
+
+  // Both take the run id positionally; a null id falls back to the latest
+  // completed run on the backend.
+  const fetcher = useCallback(() => api.getComparison(selectedRun), [selectedRun]);
+  const { data, loading, error, refresh } = useApi(fetcher, [selectedRun]);
+
+  const frontierFetcher = useCallback(() => api.getFrontier(selectedRun), [selectedRun]);
+  const { data: frontier } = useApi(frontierFetcher, [selectedRun]);
 
   const noRunYet = error && error.status === 404;
 
@@ -76,6 +90,7 @@ export default function Performance() {
         eyebrow="Performance"
         title="TRACE vs static baseline"
         description="The same batch of synthetic cases, run through TRACE's contextual agent and through a fixed failure-type → action baseline."
+        action={<RunSelector value={selectedRun} onChange={setSelectedRun} />}
       />
 
       <div className="px-8 py-8 space-y-10">

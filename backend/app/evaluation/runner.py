@@ -9,6 +9,7 @@ the *decisions* made, not by lucky/unlucky draws of the RNG.
 import random
 import uuid
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models import RecoveryCase, EvaluationRun, EvaluationResult
@@ -43,12 +44,16 @@ def _make_recovery_case(db: Session, sc: SyntheticCase, system: str, eval_run_id
     )
     db.add(case)
     db.flush()
-    ensure_classified(db, case, failure_code=sc.failure_code, failure_message=sc.failure_message)
+    # allow_llm=False: no network calls inside the batch. Keeps the run fast,
+    # reproducible, and free of blocking I/O inside the write transaction.
+    ensure_classified(db, case, failure_code=sc.failure_code,
+                      failure_message=sc.failure_message, allow_llm=False)
     return case
 
 
 def run_evaluation(db: Session, dataset_size: int = 300, seed: int | None = None,
-                    agent_mode: str | None = None) -> dict:
+                    agent_mode: str | None = None, demo_email: str | None = None,
+                    demo_email_count: int = 1) -> dict:
     seed = seed if seed is not None else settings.SIMULATION_SEED
     dataset = generate_dataset(dataset_size, seed)
 
@@ -60,12 +65,22 @@ def run_evaluation(db: Session, dataset_size: int = 300, seed: int | None = None
         config={"agent_mode": agent_mode or settings.AGENT_MODE},
     )
     db.add(run_record)
-    db.flush()
+    db.commit()  # persist the run row up front so the write lock isn't held across the whole loop
+    run_record_pk = run_record.id  # keep the PK; the loop below detaches session objects
 
     for index, sc in enumerate(dataset):
         case_seed = _case_seed(seed, index)
 
         trace_case = _make_recovery_case(db, sc, "TRACE", eval_run_id)
+        if demo_email and index < demo_email_count:
+            # Route just this handful of TRACE cases to a real inbox instead
+            # of the usual fake placeholder, so a live demo can show an
+            # actual recovery email landing -- these are still ordinary
+            # random synthetic cases otherwise (not hand-tuned to guarantee
+            # an email-sending action fires), and only TRACE's copy gets the
+            # real address so you don't get two emails for the same case.
+            trace_case.customer_email = demo_email
+            db.flush()
         rng_trace = random.Random(case_seed)
         run_to_completion(db, trace_case, rng_trace, agent_mode=agent_mode, auto_resolve=True)
 
@@ -73,20 +88,38 @@ def run_evaluation(db: Session, dataset_size: int = 300, seed: int | None = None
         rng_baseline = random.Random(case_seed)
         run_baseline(db, baseline_case, rng_baseline)
 
+        # Both cases are committed and will never be touched again. Drop them
+        # from the session: each per-case commit expires every object still in
+        # the identity map, so letting it grow to thousands of rows makes the
+        # batch progressively slower (and is why a 300-case run appeared to
+        # crawl through cases one at a time).
+        db.expunge_all()
+
     db.commit()
 
     trace_metrics = compute_metrics(db, eval_run_id, "TRACE")
     baseline_metrics = compute_metrics(db, eval_run_id, "BASELINE")
 
     for system, metrics in (("TRACE", trace_metrics), ("BASELINE", baseline_metrics)):
-        db.add(EvaluationResult(run_id=run_record.id, system=system, metrics=metrics))
+        db.add(EvaluationResult(run_id=run_record_pk, system=system, metrics=metrics))
     db.commit()
+
+    # Best-effort: fold the WAL back into the main db file so it doesn't grow
+    # without bound across many runs. Never let a checkpoint hiccup fail the run.
+    try:
+        db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+    except Exception:
+        pass
+
+    created_at = db.query(EvaluationRun.created_at).filter(
+        EvaluationRun.id == run_record_pk
+    ).scalar()
 
     return {
         "run_id": eval_run_id,
         "dataset_size": dataset_size,
         "seed": seed,
-        "created_at": run_record.created_at,
+        "created_at": created_at,
         "results": {"TRACE": trace_metrics, "BASELINE": baseline_metrics},
     }
 

@@ -29,10 +29,10 @@ TERMINAL_STATUSES = {CaseStatus.RECOVERED.value, CaseStatus.STOPPED.value,
 
 
 def ensure_classified(db: Session, case: RecoveryCase, failure_code: str | None = None,
-                       failure_message: str | None = None) -> None:
+                       failure_message: str | None = None, allow_llm: bool = True) -> None:
     if case.failure_type:
         return  # already classified
-    result = classify_failure(failure_code, failure_message)
+    result = classify_failure(failure_code, failure_message, allow_llm=allow_llm)
     case.failure_type = result.failure_type.value
     case.classification_confidence = result.confidence
     case.classification_method = result.method.value
@@ -115,16 +115,19 @@ def run_iteration(db: Session, case: RecoveryCase, rng: random.Random, agent_mod
         # or simply halt this iteration with no execution.
         if policy_result.final_action:
             execution_record, outcome_record = execute_action(
-                db, case, policy_result.final_action, rng, auto_resolve=auto_resolve
+                db, case, policy_result.final_action, rng, auto_resolve=auto_resolve,
+                customer_email=case.customer_email,
             )
     elif policy_result.result == PolicyResult.FLAGGED_FOR_REVIEW:
         # Route to human review rather than auto-executing an uncertain/high-stakes action.
         execution_record, outcome_record = execute_action(
-            db, case, ActionType.ESCALATE_FOR_REVIEW.value, rng, auto_resolve=auto_resolve
+            db, case, ActionType.ESCALATE_FOR_REVIEW.value, rng, auto_resolve=auto_resolve,
+            customer_email=case.customer_email,
         )
     else:  # APPROVED
         execution_record, outcome_record = execute_action(
-            db, case, policy_result.final_action, rng, auto_resolve=auto_resolve
+            db, case, policy_result.final_action, rng, auto_resolve=auto_resolve,
+            customer_email=case.customer_email,
         )
 
     return {

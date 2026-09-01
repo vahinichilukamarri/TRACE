@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader } from "@/components/Page";
 import { CaseCard } from "@/components/CaseCard";
+import { RunSelector } from "@/components/RunSelector";
 import { EmptyState, ErrorState, LoadingState } from "@/components/States";
 import { CASE_STATUS_LABELS } from "@/lib/domain";
 
@@ -15,27 +16,47 @@ export default function RecoveryCases() {
   const [searchParams, setSearchParams] = useSearchParams();
   const status = searchParams.get("status") || "ALL";
   const [page, setPage] = useState(0);
+  // Default to individually-ingested demo cases: that's what you click through
+  // in a live demo, and it doesn't shift under you when a new batch is run.
+  const [selectedScope, setSelectedScope] = useState("live");
 
   const fetcher = useCallback(
     () =>
-      api.listCases({
-        status: status === "ALL" ? undefined : status,
-        system: "TRACE",
-        limit: PAGE_SIZE,
-        offset: page * PAGE_SIZE,
-      }),
-    [status, page]
+      selectedScope === "live"
+        ? api.listCases({
+            status: status === "ALL" ? undefined : status,
+            source: "live",
+            limit: PAGE_SIZE,
+            offset: page * PAGE_SIZE,
+          })
+        : api.listCases({
+            status: status === "ALL" ? undefined : status,
+            system: "TRACE",
+            eval_run_id: selectedScope,
+            limit: PAGE_SIZE,
+            offset: page * PAGE_SIZE,
+          }),
+    [status, page, selectedScope]
   );
-  const { data: cases, loading, error, refresh } = useApi(fetcher, [status, page]);
+  const { data: cases, loading, error, refresh } = useApi(fetcher, [status, page, selectedScope]);
+
+  const setScope = (s) => {
+    setPage(0);
+    setSelectedScope(s);
+  };
 
   const setStatus = (s) => {
     setPage(0);
+    // Build a fresh URLSearchParams instead of mutating the one from
+    // useSearchParams -- mutating that shared instance and passing it back
+    // makes React Router miss the change, so filter clicks don't re-render.
+    const next = new URLSearchParams(searchParams);
     if (s === "ALL") {
-      searchParams.delete("status");
+      next.delete("status");
     } else {
-      searchParams.set("status", s);
+      next.set("status", s);
     }
-    setSearchParams(searchParams);
+    setSearchParams(next, { replace: true });
   };
 
   const counts = useMemo(() => cases?.length ?? 0, [cases]);
@@ -46,6 +67,9 @@ export default function RecoveryCases() {
         eyebrow="Recovery cases"
         title="Recovery intelligence queue"
         description="Every failed payment TRACE is tracking, why it matters, and what happens next."
+        action={
+          <RunSelector value={selectedScope} onChange={setScope} includeLiveOption={true} />
+        }
       />
 
       <div className="px-8 py-6">

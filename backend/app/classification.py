@@ -94,6 +94,14 @@ def _keyword_classify(message: str) -> ClassificationResult:
     )
 
 
+# A live classification may call out to Groq. Bound it hard: without an
+# explicit timeout/retry cap the SDK retries with multi-second backoff, and
+# because classification happens inside an open DB write transaction a slow
+# call stalls the request and holds the SQLite writer lock.
+LLM_CLASSIFY_TIMEOUT_SECONDS = 10.0
+LLM_CLASSIFY_MAX_RETRIES = 0
+
+
 def _llm_classify(message: str) -> ClassificationResult | None:
     """Attempt a real LLM classification call. Returns None on any failure
     so the caller can apply the safe fallback rather than guess."""
@@ -101,7 +109,11 @@ def _llm_classify(message: str) -> ClassificationResult | None:
         return None
     try:
         from groq import Groq
-        client = Groq(api_key=settings.GROQ_API_KEY)
+        client = Groq(
+            api_key=settings.GROQ_API_KEY,
+            timeout=LLM_CLASSIFY_TIMEOUT_SECONDS,
+            max_retries=LLM_CLASSIFY_MAX_RETRIES,
+        )
         prompt = (
             "Classify this payment failure message into exactly one of: "
             "BANK_TIMEOUT, CARD_DECLINED, INSUFFICIENT_FUNDS, AUTH_FAILURE, PROCESSING_ERROR.\n"
@@ -131,19 +143,26 @@ def _llm_classify(message: str) -> ClassificationResult | None:
         return None
 
 
-def classify_failure(failure_code: str | None, failure_message: str | None) -> ClassificationResult:
+def classify_failure(failure_code: str | None, failure_message: str | None,
+                      allow_llm: bool = True) -> ClassificationResult:
     """Public entry point. Structured code wins when present; otherwise
     attempt LLM classification of the free-text message; otherwise fall
-    back to conservative keyword heuristics."""
+    back to conservative keyword heuristics.
+
+    allow_llm=False forces the deterministic keyword path. Batch evaluation
+    uses this: a network call per case makes a 300-case run take ~10 minutes
+    and, worse, makes the benchmark non-reproducible -- the whole point of
+    the harness is that TRACE and the baseline see identical inputs."""
     if failure_code:
         result = classify_structured(failure_code)
         if result:
             return result
 
     if failure_message:
-        llm_result = _llm_classify(failure_message)
-        if llm_result:
-            return llm_result
+        if allow_llm:
+            llm_result = _llm_classify(failure_message)
+            if llm_result:
+                return llm_result
         return _keyword_classify(failure_message)
 
     # No signal at all -- safest possible fallback, never guess.

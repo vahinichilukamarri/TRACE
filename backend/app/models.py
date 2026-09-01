@@ -45,6 +45,11 @@ class RecoveryCase(Base):
     customer_engagement = Column(String, default="NONE")
     time_since_failure_minutes = Column(Integer, default=0)
     remaining_recovery_opportunities = Column(Integer, default=3)
+    # Nullable -- when unset, execution.py falls back to a fake placeholder
+    # address so nothing ever accidentally emails a real inbox. Set this
+    # explicitly (via PaymentEventIn.customer_email on live ingest, or the
+    # demo_email param on a batch evaluation run) to actually receive mail.
+    customer_email = Column(String, nullable=True)
 
     status = Column(String, default="OPEN", index=True)
     source = Column(String, default="live")  # "live" | "simulation"
@@ -87,7 +92,7 @@ class AuditLogEntry(Base):
     __tablename__ = "audit_log_entries"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False, index=True)
     event_type = Column(String, nullable=False)
     payload = Column(JSON, nullable=True)
     notes = Column(Text, nullable=True)
@@ -100,7 +105,7 @@ class AgentDecisionRecord(Base):
     __tablename__ = "agent_decisions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False, index=True)
     decision = Column(String, nullable=False)       # DecisionType
     action = Column(String, nullable=False)          # ActionType
     confidence = Column(Float, nullable=False)
@@ -120,7 +125,7 @@ class PolicyCheckRecord(Base):
     __tablename__ = "policy_checks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False, index=True)
     decision_id = Column(Integer, ForeignKey("agent_decisions.id"), nullable=True)
     proposed_action = Column(String, nullable=False)
     result = Column(String, nullable=False)  # PolicyResult
@@ -135,7 +140,7 @@ class ExecutionRecord(Base):
     __tablename__ = "executions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False, index=True)
     action = Column(String, nullable=False)
     execution_type = Column(String, nullable=False)  # REAL | SIMULATED
     status = Column(String, nullable=False)
@@ -150,7 +155,7 @@ class OutcomeRecord(Base):
     __tablename__ = "outcomes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
+    case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False, index=True)
     execution_id = Column(Integer, ForeignKey("executions.id"), nullable=True)
     outcome = Column(String, nullable=False)  # OutcomeType
     simulated = Column(Boolean, default=True)

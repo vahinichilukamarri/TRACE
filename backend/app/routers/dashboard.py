@@ -3,7 +3,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.database import get_db
-from app.models import RecoveryCase, AgentDecisionRecord, PolicyCheckRecord, EvaluationRun, ExecutionRecord
+from app.models import (
+    RecoveryCase, AgentDecisionRecord, PolicyCheckRecord, EvaluationRun,
+    EvaluationResult, ExecutionRecord,
+)
 from app.evaluation.metrics import compute_metrics, ACTIVE_INTERVENTION_ACTIONS
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -12,9 +15,19 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 def _resolve_run_id(db: Session, eval_run_id: str | None) -> str:
     if eval_run_id:
         return eval_run_id
-    latest = db.query(EvaluationRun).order_by(EvaluationRun.created_at.desc()).first()
+    # Resolve to the latest *completed* run only. EvaluationResult rows are
+    # written once, at the very end of run_evaluation, so their presence is
+    # the marker that a batch actually finished. Without this the dashboard
+    # latches onto the run currently being written and appears to fill in one
+    # case at a time (and a crashed half-run would linger forever).
+    latest = (
+        db.query(EvaluationRun)
+        .join(EvaluationResult, EvaluationResult.run_id == EvaluationRun.id)
+        .order_by(EvaluationRun.created_at.desc())
+        .first()
+    )
     if not latest:
-        raise HTTPException(404, "No evaluation runs exist yet. POST /evaluation/run first.")
+        raise HTTPException(404, "No completed evaluation runs yet. POST /evaluation/run first.")
     return latest.run_id
 
 

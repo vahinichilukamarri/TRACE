@@ -45,6 +45,11 @@ class Settings:
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
     SMTP_USER: str = os.getenv("SMTP_USER", "")
     SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    # Hard ceiling on any SMTP round trip. Without a timeout smtplib blocks
+    # forever on a throttled/unreachable server -- and because the send happens
+    # inside an open DB write transaction, that also strands the SQLite writer
+    # lock and wedges every later run with "database is locked".
+    SMTP_TIMEOUT_SECONDS: int = int(os.getenv("SMTP_TIMEOUT_SECONDS", "15"))
     EMAIL_FROM: str = os.getenv("EMAIL_FROM", "recovery@trace-demo.example")
     RECOVERY_LINK_BASE_URL: str = os.getenv("RECOVERY_LINK_BASE_URL", "http://localhost:8000/pay")
 

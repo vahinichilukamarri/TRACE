@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Zap, ShieldAlert } from "lucide-react";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
@@ -7,31 +7,73 @@ import { KpiBlock } from "@/components/KpiBlock";
 import { RecoveryFlow } from "@/components/RecoveryFlow";
 import { CaseCard } from "@/components/CaseCard";
 import { Button } from "@/components/Button";
+import { RunSelector } from "@/components/RunSelector";
 import { EmptyState, ErrorState, LoadingState } from "@/components/States";
 import { formatCompactCurrency, formatPercent } from "@/lib/format";
 
 export default function CommandCenter() {
   const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState(null);
+  const [lastRun, setLastRun] = useState(null);
+  const [selectedRun, setSelectedRun] = useState(null);
 
-  const fetchOverview = useCallback(() => api.getOverview({ system: "TRACE" }), []);
-  const { data: overview, loading, error, refresh } = useApi(fetchOverview, []);
+  // Default the view to the most recent run once the runs list loads.
+  const runsFetcher = useCallback(() => api.listEvaluationRuns(1), []);
+  const { data: latestRun, refresh: refreshRuns } = useApi(runsFetcher, []);
+  useEffect(() => {
+    if (selectedRun == null && latestRun && latestRun.length > 0) {
+      setSelectedRun(latestRun[0].run_id);
+    }
+  }, [latestRun, selectedRun]);
+
+  // eval_run_id is dropped from the query string while null, and the backend
+  // already defaults to the latest completed run in that case.
+  const fetchOverview = useCallback(
+    () => api.getOverview({ system: "TRACE", eval_run_id: selectedRun }),
+    [selectedRun]
+  );
+  const { data: overview, loading, error, refresh } = useApi(fetchOverview, [selectedRun]);
 
   const fetchAttentionCases = useCallback(
-    () => api.listCases({ status: "ESCALATED", system: "TRACE", limit: 4 }),
-    []
+    () => api.listCases({ status: "ESCALATED", system: "TRACE", eval_run_id: selectedRun, limit: 4 }),
+    [selectedRun]
   );
-  const { data: attentionCases } = useApi(fetchAttentionCases, []);
+  const { data: attentionCases, refresh: refreshAttention } = useApi(fetchAttentionCases, [selectedRun]);
 
   const noRunYet = error && error.status === 404;
 
+  const refreshAll = useCallback(
+    () => Promise.allSettled([refresh(), refreshAttention()]),
+    [refresh, refreshAttention]
+  );
+
+  const pollRef = useRef(null);
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
   const handleRunEvaluation = async () => {
     setRunning(true);
+    setRunError(null);
+    // A 300-case batch is a long synchronous request. Poll while it runs so
+    // the page catches up even if the request connection drops before it
+    // returns -- previously the numbers only updated on a full remount
+    // (i.e. after navigating away and back).
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(() => { refreshAll(); }, 5000);
     try {
-      await api.runEvaluation({ dataset_size: 300 });
-      await refresh();
+      // No seed -> the backend picks a fresh random one, so each click really is
+      // a new batch. (Sending a fixed seed replays an identical dataset, which
+      // makes a completed run look like nothing happened.)
+      const result = await api.runEvaluation({ dataset_size: 300 });
+      setLastRun(result);
+      // Point the view at the run just produced, and refresh the dropdown so
+      // the new run appears in it.
+      if (result?.run_id) setSelectedRun(result.run_id);
+      await refreshRuns();
     } catch (e) {
-      console.error(e);
+      setRunError(e.message || "Evaluation run failed.");
     } finally {
+      clearInterval(pollRef.current);
+      await refreshAll();
       setRunning(false);
     }
   };
@@ -43,14 +85,48 @@ export default function CommandCenter() {
         title="Revenue recovery, live"
         description="How much revenue is at risk, what TRACE has recovered, and which cases need a human."
         action={
-          <Button variant="secondary" onClick={handleRunEvaluation} disabled={running}>
-            <Zap className="w-3.5 h-3.5" strokeWidth={1.5} />
-            {running ? "Running evaluation…" : "Run new evaluation"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <RunSelector value={selectedRun} onChange={setSelectedRun} />
+            <Button variant="secondary" onClick={handleRunEvaluation} disabled={running}>
+              <Zap className="w-3.5 h-3.5" strokeWidth={1.5} />
+              {running ? "Running evaluation…" : "Run new evaluation"}
+            </Button>
+          </div>
         }
       />
 
       <div className="px-8 py-8 space-y-10">
+        {running && (
+          <div className="text-[11px] font-mono text-signal-orange border border-signal-orange/30 bg-signal-orange-dim/5 px-4 py-2">
+            Running a 300-case evaluation against the baseline — this can take up to a minute.
+            The figures below refresh automatically as it progresses.
+          </div>
+        )}
+        {runError && (
+          <ErrorState
+            title="Evaluation run failed"
+            description={runError}
+            onRetry={handleRunEvaluation}
+          />
+        )}
+        {!running && lastRun && (
+          <div className="text-[11px] font-mono text-signal-mint border border-signal-mint/30 bg-signal-mint-dim/10 px-4 py-2 flex flex-wrap gap-x-5 gap-y-1">
+            <span>Run complete</span>
+            <span className="text-ink-faint">
+              id <span className="text-bone">{String(lastRun.run_id).slice(0, 8)}</span>
+            </span>
+            <span className="text-ink-faint">
+              seed <span className="text-bone">{lastRun.seed}</span>
+            </span>
+            <span className="text-ink-faint">
+              recovered{" "}
+              <span className="text-bone">
+                {lastRun.results?.TRACE?.transactions_recovered} / {lastRun.results?.TRACE?.total_failed_payments}
+              </span>
+            </span>
+          </div>
+        )}
+
         {loading && <LoadingState label="Loading command center" />}
 
         {noRunYet && (

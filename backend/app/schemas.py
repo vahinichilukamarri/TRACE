@@ -22,6 +22,11 @@ class PaymentEventIn(BaseModel):
     time_since_failure_minutes: int = 0
     remaining_recovery_opportunities: int = 3
 
+    # Optional -- leave unset for normal fake-placeholder behavior. Set this
+    # to a real address only when you deliberately want to receive an actual
+    # recovery email for demo/testing purposes.
+    customer_email: Optional[str] = None
+
     source: str = "live"
 
 
@@ -103,6 +108,7 @@ class CaseOut(BaseModel):
     customer_engagement: str
     time_since_failure_minutes: int
     remaining_recovery_opportunities: int
+    customer_email: Optional[str]
     status: str
     source: str
     system: str
@@ -137,6 +143,15 @@ class EvaluationRunRequest(BaseModel):
     dataset_size: int = 300
     seed: Optional[int] = None
     use_existing_dataset: bool = False
+    # Optional: route the first `demo_email_count` TRACE cases in this batch
+    # to a real address instead of the usual fake placeholder, so you can
+    # watch an actual recovery email land in your inbox during a live demo.
+    # These cases are otherwise ordinary random synthetic cases -- not
+    # guaranteed to result in an email-sending action, since not every
+    # failure type/history combination leads to SEND_RECOVERY_LINK or
+    # SUGGEST_ALTERNATIVE_METHOD.
+    demo_email: Optional[str] = None
+    demo_email_count: int = 1
 
 
 class EvaluationRunOut(BaseModel):

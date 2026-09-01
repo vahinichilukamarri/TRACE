@@ -105,8 +105,13 @@ def send_recovery_email(
     to_address, payment_id, amount, kind="recovery_link", *,
     currency="INR", failure_type=None,
     remaining_recovery_opportunities=None, previous_recovery_attempts=None,
-    customer_name=None,
+    customer_name=None, allow_real_send=False,
 ) -> dict:
+    """Renders the recovery email. A REAL SMTP send is attempted only when the
+    caller explicitly opts in via allow_real_send -- i.e. the case carries a
+    deliberately-set customer_email. Batch simulation uses fake placeholder
+    recipients, and blasting those at a real SMTP server would both mail
+    nonsense addresses and add seconds of blocking network I/O per case."""
     link_token = uuid.uuid4().hex[:12]
     link = f"{settings.RECOVERY_LINK_BASE_URL}/{payment_id}?t={link_token}"
 
@@ -137,7 +142,8 @@ def send_recovery_email(
         "This is a simulated recovery email sent by TRACE for demonstration purposes."
     )
 
-    if settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD:
+    smtp_configured = bool(settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD)
+    if allow_real_send and smtp_configured:
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
@@ -145,7 +151,8 @@ def send_recovery_email(
             msg["To"] = to_address
             msg.attach(MIMEText(text_body, "plain"))
             msg.attach(MIMEText(html_body, "html"))
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT,
+                              timeout=settings.SMTP_TIMEOUT_SECONDS) as server:
                 server.starttls()
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                 server.sendmail(settings.EMAIL_FROM, [to_address], msg.as_string())
@@ -171,6 +178,12 @@ def send_recovery_email(
     # can show exactly what would have been sent.
     return {
         "delivery": "SIMULATED",
+        "simulated_reason": (
+            "No explicit customer_email on this case, so TRACE rendered the email "
+            "without contacting a real inbox."
+            if not allow_real_send else
+            "SMTP is not configured; email rendered but not delivered."
+        ),
         "to": to_address,
         "subject": subject,
         "body": text_body,

@@ -50,6 +50,7 @@ def ingest_event(event: schemas.PaymentEventIn, run_first_iteration: bool = True
         customer_engagement=event.customer_engagement,
         time_since_failure_minutes=event.time_since_failure_minutes,
         remaining_recovery_opportunities=event.remaining_recovery_opportunities,
+        customer_email=event.customer_email,
         status=CaseStatus.OPEN.value,
         source=event.source,
         system="TRACE",
@@ -140,6 +141,7 @@ def get_case(payment_id: str, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[schemas.CaseOut])
 def list_cases(status: str | None = None, system: str | None = None, source: str | None = None,
+               eval_run_id: str | None = None,
                limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
     query = db.query(RecoveryCase)
     if status:
@@ -148,5 +150,7 @@ def list_cases(status: str | None = None, system: str | None = None, source: str
         query = query.filter(RecoveryCase.system == system)
     if source:
         query = query.filter(RecoveryCase.source == source)
+    if eval_run_id:
+        query = query.filter(RecoveryCase.eval_run_id == eval_run_id)
     cases = query.order_by(RecoveryCase.created_at.desc()).offset(offset).limit(limit).all()
     return [schemas.CaseOut.model_validate(c) for c in cases]
