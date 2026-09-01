@@ -6,11 +6,12 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app import schemas
 from app.models import RecoveryCase, ProcessedEvent
-from app.enums import CaseStatus, AuditEventType
+from app.enums import CaseStatus, AuditEventType, ActionType
 from app.idempotency import get_existing_case, register_new_event, mark_duplicate
-from app.engine import ensure_classified, run_iteration, TERMINAL_STATUSES
-from app.execution import resolve_after_click
+from app.engine import ensure_classified, run_iteration, advance_case_state, TERMINAL_STATUSES
+from app.execution import execute_action, resolve_after_click
 from app.audit import log_event
+from app.config import settings
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -95,7 +96,43 @@ def reassess_case(payment_id: str, db: Session = Depends(get_db)):
 
     iteration = len(case.decisions)
     rng = random.Random()
+
+    # Same safety bound the batch harness enforces (spec section 11): never
+    # allow an unbounded autonomous loop. Once the iteration budget is spent,
+    # force the safe terminal action instead of returning another decision.
+    if iteration >= settings.MAX_REASSESSMENT_ITERATIONS:
+        forced_execution, forced_outcome = execute_action(
+            db, case, ActionType.STOP_RECOVERY.value, rng,
+            auto_resolve=False, customer_email=case.customer_email,
+        )
+        log_event(db, case.id, AuditEventType.STATUS_CHANGE,
+                  notes="Reassessment iteration bound reached; forced STOP_RECOVERY.")
+        db.commit()
+        db.refresh(case)
+        return schemas.ProcessResultOut(
+            payment_id=case.payment_id,
+            status=case.status,
+            decision=None,
+            policy=None,
+            execution=schemas.ExecutionOut.model_validate(forced_execution),
+            outcome=schemas.OutcomeOut.model_validate(forced_outcome) if forced_outcome else None,
+        )
+
     step = run_iteration(db, case, rng, iteration=iteration, auto_resolve=False)
+
+    # Advance the case context so the NEXT reassessment sees different state.
+    # Batch mode does this inside run_to_completion's loop; the live route has
+    # to do it explicitly, otherwise every reassessment re-decides an unchanged
+    # context and the case never converges.
+    if case.status not in TERMINAL_STATUSES:
+        action = step["execution"].action if step["execution"] else None
+        advance_case_state(case, action, step["outcome"], rng)
+        db.flush()
+        log_event(db, case.id, AuditEventType.REASSESSMENT, payload={
+            "iteration": iteration + 1,
+            "case_state": case.to_context_dict(),
+        })
+
     db.commit()
     db.refresh(case)
 

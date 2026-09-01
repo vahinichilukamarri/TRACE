@@ -90,3 +90,69 @@ def test_click_endpoint_resolves_pending_outcome(client):
         assert click_resp.status_code == 200
         updated = click_resp.json()
         assert updated["customer_engagement"] == "LINK_CLICKED"
+
+
+def test_live_reassess_converges_and_advances_state(client):
+    """The live /reassess route must behave like the batch loop: each call
+    advances the case context, and the case reaches a terminal status within
+    MAX_REASSESSMENT_ITERATIONS calls instead of re-deciding forever."""
+    from app.config import settings
+
+    pid = "PAY_REASSESS_CONVERGE"
+    client.post("/cases/ingest", json={
+        "payment_id": pid,
+        "amount": 12000,
+        "failure_code": "CARD_DECLINED",
+        "customer_success_rate": 0.8,
+        "remaining_recovery_opportunities": 3,
+        "time_since_failure_minutes": 5,
+    })
+
+    first = client.get(f"/cases/{pid}").json()
+    # The case must still be open, otherwise this test proves nothing.
+    assert first["status"] == "OPEN"
+
+    observed = [(first["time_since_failure_minutes"], first["remaining_recovery_opportunities"])]
+    calls = 0
+
+    for _ in range(settings.MAX_REASSESSMENT_ITERATIONS + 2):
+        resp = client.post(f"/cases/{pid}/reassess")
+        if resp.status_code == 409:
+            break  # already terminal; nothing left to reassess
+        assert resp.status_code == 200
+        calls += 1
+
+        detail = client.get(f"/cases/{pid}").json()
+        observed.append(
+            (detail["time_since_failure_minutes"], detail["remaining_recovery_opportunities"])
+        )
+        if detail["status"] != "OPEN":
+            break
+
+    final = client.get(f"/cases/{pid}").json()
+    assert final["status"] != "OPEN", "live reassessment never converged to a terminal status"
+    assert calls <= settings.MAX_REASSESSMENT_ITERATIONS, (
+        f"took {calls} reassessments, bound is {settings.MAX_REASSESSMENT_ITERATIONS}"
+    )
+    # Context genuinely moved between reassessments (the actual bug: it didn't).
+    assert len(set(observed)) > 1, f"case context never changed across reassessments: {observed}"
+    assert final["time_since_failure_minutes"] > first["time_since_failure_minutes"]
+
+
+def test_live_reassess_is_rejected_once_terminal(client):
+    """Once forced to a terminal state, further reassessment is refused rather
+    than silently starting a new loop."""
+    from app.config import settings
+
+    pid = "PAY_REASSESS_TERMINAL"
+    client.post("/cases/ingest", json={
+        "payment_id": pid, "amount": 9000, "failure_code": "CARD_DECLINED",
+        "customer_success_rate": 0.8, "remaining_recovery_opportunities": 3,
+    })
+
+    for _ in range(settings.MAX_REASSESSMENT_ITERATIONS + 2):
+        if client.post(f"/cases/{pid}/reassess").status_code == 409:
+            break
+
+    assert client.get(f"/cases/{pid}").json()["status"] != "OPEN"
+    assert client.post(f"/cases/{pid}/reassess").status_code == 409

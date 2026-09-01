@@ -16,7 +16,7 @@ import random
 from sqlalchemy.orm import Session
 
 from app.models import RecoveryCase, AgentDecisionRecord, PolicyCheckRecord
-from app.enums import ActionType, PolicyResult, CaseStatus, AuditEventType, DecisionType
+from app.enums import ActionType, PolicyResult, CaseStatus, AuditEventType, DecisionType, OutcomeType
 from app.classification import classify_failure
 from app.agent import decide as agent_decide
 from app.policy import check_policy
@@ -138,6 +138,31 @@ def run_iteration(db: Session, case: RecoveryCase, rng: random.Random, agent_mod
     }
 
 
+def advance_case_state(case: RecoveryCase, action: str | None, outcome, rng: random.Random) -> None:
+    """Advance a case's context after one completed iteration so the *next*
+    reassessment sees genuinely different state (elapsed time, spent attempts).
+
+    Shared by the batch harness and the live /cases/{payment_id}/reassess
+    route. Without it a live case is re-decided against an unchanged context
+    forever and can never reach a terminal state.
+
+    No-op once the payment is recovered -- there is nothing left to advance.
+    Mutates `case` only; the caller owns flushing and audit logging.
+    """
+    if outcome is not None and outcome.outcome == OutcomeType.RECOVERED.value:
+        return
+
+    if action == ActionType.WAIT_AND_REASSESS.value:
+        case.time_since_failure_minutes += rng.randint(60, 180)
+    elif action in (ActionType.RETRY_PAYMENT.value, ActionType.SEND_RECOVERY_LINK.value,
+                    ActionType.SUGGEST_ALTERNATIVE_METHOD.value):
+        case.previous_recovery_attempts += 1
+        case.previous_recovery_action = action
+        case.previous_outcome = "FAILED"
+        case.remaining_recovery_opportunities = max(0, case.remaining_recovery_opportunities - 1)
+        case.time_since_failure_minutes += rng.randint(15, 60)
+
+
 def run_to_completion(db: Session, case: RecoveryCase, rng: random.Random, agent_mode: str | None = None,
                        auto_resolve: bool = True, max_iterations: int | None = None) -> list[dict]:
     """Drives the bounded reassessment loop (spec section 11) until the case
@@ -165,15 +190,7 @@ def run_to_completion(db: Session, case: RecoveryCase, rng: random.Random, agent
 
         # Not recovered and case still open -> advance state for the next
         # reassessment pass, then loop (bounded by max_iterations above).
-        if action == ActionType.WAIT_AND_REASSESS.value:
-            case.time_since_failure_minutes += rng.randint(60, 180)
-        elif action in (ActionType.RETRY_PAYMENT.value, ActionType.SEND_RECOVERY_LINK.value,
-                        ActionType.SUGGEST_ALTERNATIVE_METHOD.value):
-            case.previous_recovery_attempts += 1
-            case.previous_recovery_action = action
-            case.previous_outcome = "FAILED"
-            case.remaining_recovery_opportunities = max(0, case.remaining_recovery_opportunities - 1)
-            case.time_since_failure_minutes += rng.randint(15, 60)
+        advance_case_state(case, action, outcome, rng)
         db.flush()
 
         log_event(db, case.id, AuditEventType.REASSESSMENT, payload={
