@@ -11,6 +11,7 @@ fair test rather than the agent grading its own homework.
 import random
 
 from app.enums import FailureType, ActionType
+from app.config import settings
 
 # Ground-truth base recovery probability per (failure_type, action).
 # Deliberately NOT identical to the agent's heuristic fit table in
@@ -64,6 +65,24 @@ def resolve(context: dict, action: str, rng: random.Random) -> tuple[bool, float
         return False, 0.0
 
     failure_type = FailureType(context["failure_type"])
+
+    # Domain rule, enforced as ground truth.
+    #
+    # NPCI mandates auto-reversal of most failed UPI transactions within
+    # ~RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT. Once that window has passed the
+    # money is already back with the customer, so there is simply nothing left
+    # to recover -- no action, by any system, can succeed.
+    #
+    # app/policy.py already stops TRACE from spending effort here. Without the
+    # same rule in the ground truth the simulator contradicted its own premise:
+    # it handed the policy-free baseline "recoveries" on transactions the domain
+    # says were already reversed. Threshold is read from config so the rule and
+    # the guardrail can never drift apart.
+    if failure_type == FailureType.BANK_TIMEOUT:
+        age_minutes = context.get("time_since_failure_minutes") or 0
+        if age_minutes > settings.RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT:
+            return False, 0.0
+
     base_prob = _GROUND_TRUTH[failure_type].get(action_enum, 0.1)
 
     success_rate = context.get("customer_success_rate", 0.5)

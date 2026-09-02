@@ -12,6 +12,7 @@ from pathlib import Path
 from dataclasses import dataclass, asdict
 
 from app.enums import FailureType, CustomerEngagement
+from app.config import settings
 
 FAILURE_TYPE_WEIGHTS = {
     FailureType.BANK_TIMEOUT: 0.30,
@@ -46,6 +47,37 @@ RAW_MESSAGES = {
         None,
     ],
 }
+
+# --- BANK_TIMEOUT age distribution ------------------------------------------
+#
+# BANK_TIMEOUT is our proxy for a bank / UPI-rail failure, and NPCI auto-reverses
+# most of those within RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT. Drawing its age from
+# the same flat 5-2880 minute spread as every other failure type made ~98% of the
+# bucket arrive already reversed -- trivially dead, with no decision left to make
+# and no honest recovery available to either system.
+#
+# Real bank-timeout traffic is bimodal, not flat. A timeout is either caught while
+# it is still live (a synchronous timeout or webhook lands within the hour, and
+# the payment is genuinely still recoverable), or it only surfaces later during
+# reconciliation, by which point the rail has already reversed it.
+#
+# BANK_TIMEOUT_FRESH_SHARE is the fraction that arrives INSIDE the reversal
+# window. This is an explicit modelling assumption, not a tuned constant: a slight
+# majority land live because most payment stacks learn about a timeout via a
+# synchronous response or webhook within minutes, while the tail is discovered at
+# reconciliation. Raising it makes the bucket more winnable for BOTH systems, not
+# just for TRACE -- the ground-truth model in hidden_outcome_model.py applies the
+# same window to whoever is acting.
+BANK_TIMEOUT_FRESH_SHARE = 0.55
+
+# Margins so generated cases land clearly on one side of the window rather than
+# exactly on the boundary, where rounding would make behaviour ambiguous.
+BANK_TIMEOUT_FRESH_MARGIN_MINUTES = 5
+BANK_TIMEOUT_REVERSED_MARGIN_MINUTES = 15
+
+# Oldest age any case can have, for every failure type (2 days).
+MAX_TIME_SINCE_FAILURE_MINUTES = 2880
+
 
 STRUCTURED_CODES = {
     FailureType.BANK_TIMEOUT: ["BANK_503", "GATEWAY_TIMEOUT", "ISSUER_TIMEOUT"],
@@ -91,6 +123,28 @@ def _sample_success_rate(rng: random.Random) -> float:
     return round(rng.betavariate(2.2, 2.0), 3)
 
 
+def _sample_time_since_failure(rng: random.Random, failure_type: FailureType) -> int:
+    """How long ago the failure happened.
+
+    Flat for most failure types. BANK_TIMEOUT is bimodal around the UPI
+    auto-reversal window -- see BANK_TIMEOUT_FRESH_SHARE above.
+    """
+    if failure_type != FailureType.BANK_TIMEOUT:
+        return rng.randint(5, MAX_TIME_SINCE_FAILURE_MINUTES)
+
+    window = settings.RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT
+    if rng.random() < BANK_TIMEOUT_FRESH_SHARE:
+        # Still inside the reversal window: genuinely recoverable, and the agent
+        # has a real "act now or lose it" decision to make.
+        return rng.randint(1, max(1, window - BANK_TIMEOUT_FRESH_MARGIN_MINUTES))
+
+    # Already auto-reversed by the rail; the money is back with the customer.
+    return rng.randint(
+        window + BANK_TIMEOUT_REVERSED_MARGIN_MINUTES,
+        MAX_TIME_SINCE_FAILURE_MINUTES,
+    )
+
+
 def generate_case(rng: random.Random, index: int) -> SyntheticCase:
     failure_type = _weighted_choice(rng, FAILURE_TYPE_WEIGHTS)
     amount = _sample_amount(rng)
@@ -115,7 +169,7 @@ def generate_case(rng: random.Random, index: int) -> SyntheticCase:
             weights=[0.35, 0.30, 0.20, 0.15],
         )[0]
 
-    time_since_failure = rng.randint(5, 2880)  # up to 2 days
+    time_since_failure = _sample_time_since_failure(rng, failure_type)
     remaining_opportunities = max(0, 3 - previous_recovery_attempts) if rng.random() > 0.05 else 0
 
     use_structured = rng.random() < 0.7

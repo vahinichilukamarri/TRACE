@@ -43,3 +43,74 @@ def test_never_exceeds_max_recovery_attempts_policy(db_session):
         # MAX_RECOVERY_ATTEMPTS bounds *attempts already made* before policy blocks
         # further ones; allow one extra in-flight attempt before the block lands.
         assert active_count <= settings.MAX_RECOVERY_ATTEMPTS + 1
+
+
+def test_past_window_bank_timeout_is_unrecoverable_by_any_action():
+    """Domain consistency: NPCI auto-reverses failed UPI transactions inside the
+    BANK_TIMEOUT window. Past it the money is already back with the customer, so
+    no action -- by TRACE or by the policy-free baseline -- may recover it."""
+    import random
+    from app.simulation import hidden_outcome_model
+    from app.config import settings
+    from app.enums import ActionType
+
+    window = settings.RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT
+    # Maximally favourable context otherwise: great customer, no prior attempts,
+    # already clicked the link. It must still be unrecoverable.
+    past_window = {
+        "failure_type": "BANK_TIMEOUT",
+        "time_since_failure_minutes": window + 1,
+        "customer_success_rate": 0.99,
+        "previous_recovery_attempts": 0,
+        "customer_engagement": "LINK_CLICKED",
+        "amount": 50000,
+    }
+    for action in ActionType:
+        for seed in range(150):
+            recovered, prob = hidden_outcome_model.resolve(
+                past_window, action.value, random.Random(seed)
+            )
+            assert recovered is False, f"{action.value} recovered a past-window BANK_TIMEOUT"
+            assert prob == 0.0
+
+    # ...and inside the window it must still be winnable, otherwise the whole
+    # bucket is trivially dead and the agent has no decision to make.
+    fresh = {**past_window, "time_since_failure_minutes": max(1, window - 5)}
+    assert any(
+        hidden_outcome_model.resolve(fresh, ActionType.RETRY_PAYMENT.value, random.Random(s))[0]
+        for s in range(50)
+    ), "a fresh BANK_TIMEOUT should still be recoverable"
+
+
+def test_no_system_recovers_a_past_window_bank_timeout_end_to_end(db_session):
+    """The same invariant, asserted over a real batch run rather than in
+    isolation -- for BOTH systems."""
+    from app.models import RecoveryCase
+    from app.config import settings
+
+    run_evaluation(db_session, dataset_size=120, seed=42)
+    window = settings.RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT
+
+    offenders = [
+        (c.system, c.payment_id, c.time_since_failure_minutes)
+        for c in db_session.query(RecoveryCase).filter(
+            RecoveryCase.failure_type == "BANK_TIMEOUT",
+            RecoveryCase.status == "RECOVERED",
+        ).all()
+        if c.time_since_failure_minutes > window
+    ]
+    assert not offenders, f"recovered BANK_TIMEOUT cases past the {window}-min window: {offenders}"
+
+
+def test_bank_timeout_bucket_is_not_trivially_dead(db_session):
+    """Guards the other direction: the fix must not make BANK_TIMEOUT a bucket
+    nobody can ever win, which would be just as dishonest a benchmark."""
+    from app.models import RecoveryCase
+
+    run_evaluation(db_session, dataset_size=200, seed=42)
+    bank_cases = db_session.query(RecoveryCase).filter(
+        RecoveryCase.failure_type == "BANK_TIMEOUT"
+    ).all()
+    assert bank_cases, "no BANK_TIMEOUT cases generated"
+    recovered = [c for c in bank_cases if c.status == "RECOVERED"]
+    assert recovered, "no BANK_TIMEOUT case recovered at all -- bucket is trivially dead"
