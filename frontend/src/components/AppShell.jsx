@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutGrid,
   ListChecks,
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
 
 export function AppShell({ children }) {
   const [query, setQuery] = useState("");
+  const navigate = useNavigate();
 
   return (
     <div className="min-h-screen bg-obsidian text-bone flex">
@@ -72,7 +73,9 @@ export function AppShell({ children }) {
             onSubmit={(e) => {
               e.preventDefault();
               if (query.trim()) {
-                window.location.href = `/cases/${encodeURIComponent(query.trim())}`;
+                // Client-side navigation: window.location.href forced a full
+                // page reload and threw away all in-flight state.
+                navigate(`/cases/${encodeURIComponent(query.trim())}`);
               }
             }}
           >

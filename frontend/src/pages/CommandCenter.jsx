@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { Zap, ShieldAlert } from "lucide-react";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
@@ -205,9 +206,12 @@ export default function CommandCenter() {
             <Section
               title="Cases needing attention"
               action={
-                <a href="/cases?status=ESCALATED" className="text-[11px] font-mono text-signal-orange hover:underline">
+                <Link
+                  to={`/cases?status=ESCALATED${selectedRun ? `&eval_run_id=${selectedRun}` : ""}`}
+                  className="text-[11px] font-mono text-signal-orange hover:underline"
+                >
                   View all escalated →
-                </a>
+                </Link>
               }
             >
               {attentionCases && attentionCases.length > 0 ? (

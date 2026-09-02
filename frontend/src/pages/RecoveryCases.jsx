@@ -18,7 +18,11 @@ export default function RecoveryCases() {
   const [page, setPage] = useState(0);
   // Default to individually-ingested demo cases: that's what you click through
   // in a live demo, and it doesn't shift under you when a new batch is run.
-  const [selectedScope, setSelectedScope] = useState("live");
+  // An explicit ?eval_run_id= in the URL wins, so deep links from the Command
+  // Center land on the run they were talking about instead of the live queue.
+  const [selectedScope, setSelectedScope] = useState(
+    () => searchParams.get("eval_run_id") || "live"
+  );
 
   const fetcher = useCallback(
     () =>
@@ -43,6 +47,15 @@ export default function RecoveryCases() {
   const setScope = (s) => {
     setPage(0);
     setSelectedScope(s);
+    // Keep the URL honest about what's being shown so the view is shareable
+    // and a refresh doesn't silently snap back to the live queue.
+    const next = new URLSearchParams(searchParams);
+    if (s === "live") {
+      next.delete("eval_run_id");
+    } else {
+      next.set("eval_run_id", s);
+    }
+    setSearchParams(next, { replace: true });
   };
 
   const setStatus = (s) => {

@@ -15,6 +15,10 @@ import { groupCaseIterations } from "@/lib/caseGrouping";
 import { CASE_STATUS_LABELS, FAILURE_LABELS, STATUS_SIGNAL } from "@/lib/domain";
 import { formatCurrency, formatDateTime, formatPercent } from "@/lib/format";
 
+// Actions that send the customer a clickable link -- kept in sync with
+// app/execution.py's resolve_after_click.
+const LINK_ACTIONS = ["SEND_RECOVERY_LINK", "SUGGEST_ALTERNATIVE_METHOD"];
+
 export default function CaseInvestigation() {
   const { paymentId } = useParams();
   const [actionPending, setActionPending] = useState(false);
@@ -28,7 +32,23 @@ export default function CaseInvestigation() {
   const isTerminal = caseData && caseData.status !== "OPEN";
 
   const canReassess = caseData && !isTerminal;
-  const canClick = caseData && !isTerminal && latestDecision?.action === "SEND_RECOVERY_LINK";
+
+  // Mirror the backend's resolve_after_click: it resolves the most recent
+  // SEND_RECOVERY_LINK *or* SUGGEST_ALTERNATIVE_METHOD execution that is still
+  // PENDING. Keying off the last *decision*'s action (and only the link action)
+  // meant alternative-method cases showed no way to simulate the click, so their
+  // pending outcome could never be resolved. Policy can also override the
+  // proposed action, so key off what actually executed.
+  const linkExecution = [...(caseData?.executions || [])]
+    .reverse()
+    .find((e) => LINK_ACTIONS.includes(e.action));
+  // Gate on engagement, not on "a PENDING outcome exists": resolving a click
+  // appends a new outcome row rather than updating the original PENDING one,
+  // so a pending-row check stays true forever and lets you click repeatedly,
+  // appending a duplicate outcome each time. LINK_SENT -> LINK_CLICKED is the
+  // one-shot transition the backend actually models.
+  const canClick =
+    caseData && !isTerminal && !!linkExecution && caseData.customer_engagement === "LINK_SENT";
 
   const handleReassess = async () => {
     setActionPending(true);
