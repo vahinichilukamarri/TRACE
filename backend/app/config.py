@@ -39,12 +39,22 @@ class Settings:
     LLM_ROUTE_MIN_CLASSIFICATION_CONFIDENCE: float = float(
         os.getenv("LLM_ROUTE_MIN_CLASSIFICATION_CONFIDENCE", "0.6"))
     # If the top two candidate actions are within this fraction of each other,
-    # the argmax is separating noise, not signal.
-    LLM_ROUTE_EV_MARGIN_PCT: float = float(os.getenv("LLM_ROUTE_EV_MARGIN_PCT", "0.10"))
+    # the argmax is separating noise, not signal. Kept tight (5%): the scoring
+    # formula multiplies base_fit by terms identical across a case's candidates,
+    # so the top-two gap collapses to a per-failure-type constant. At 10% this
+    # trigger degenerated into a failure-type lookup (91% of CARD_DECLINED, 0%
+    # of BANK_TIMEOUT) rather than a per-case signal.
+    LLM_ROUTE_EV_MARGIN_PCT: float = float(os.getenv("LLM_ROUTE_EV_MARGIN_PCT", "0.05"))
     # High-value transactions that have already failed at least this many
     # recovery attempts: the expected cost of being wrong dwarfs inference cost.
     LLM_ROUTE_HIGH_VALUE_MIN_ATTEMPTS: int = int(
         os.getenv("LLM_ROUTE_HIGH_VALUE_MIN_ATTEMPTS", "1"))
+    # Route when the case carries history the fit table structurally cannot
+    # represent. _ACTION_FIT is keyed on failure_type alone -- it encodes nothing
+    # about what was already tried or how the customer responded, so a case with
+    # a failed prior attempt (or a click that never converted) is exactly where
+    # the heuristic is blind and real reasoning has something to add.
+    LLM_ROUTE_ON_PRIOR_EVIDENCE: bool = _env_bool("LLM_ROUTE_ON_PRIOR_EVIDENCE", True)
 
     # --- Policy ---
     MAX_RECOVERY_ATTEMPTS: int = int(os.getenv("MAX_RECOVERY_ATTEMPTS", "3"))

@@ -10,10 +10,14 @@ if that call is unavailable/fails, we do NOT guess a specific category --
 we fall back to PROCESSING_ERROR with a low confidence score, exactly as
 spec section 20 requires.
 """
+import logging
 from dataclasses import dataclass
 
 from app.enums import FailureType, ClassificationMethod
 from app.config import settings
+
+# uvicorn configures this logger, so warnings land in deployment logs.
+logger = logging.getLogger("uvicorn.error")
 
 # --- Deterministic structured-code mapping -------------------------------
 
@@ -100,6 +104,12 @@ def _keyword_classify(message: str) -> ClassificationResult:
 # call stalls the request and holds the SQLite writer lock.
 LLM_CLASSIFY_TIMEOUT_SECONDS = 10.0
 LLM_CLASSIFY_MAX_RETRIES = 0
+# GROQ_MODEL defaults to a reasoning model whose internal reasoning tokens are
+# billed against max_tokens BEFORE any visible content is emitted. At 100 the
+# budget was ALWAYS exhausted first (observed: finish_reason='length', 0 chars
+# of content, 507 chars of reasoning), so this call silently failed 100% of the
+# time and every free-text message quietly fell through to keyword matching.
+LLM_CLASSIFY_MAX_TOKENS = 800
 
 
 def _llm_classify(message: str) -> ClassificationResult | None:
@@ -122,10 +132,17 @@ def _llm_classify(message: str) -> ClassificationResult | None:
         )
         resp = client.chat.completions.create(
             model=settings.GROQ_MODEL,
-            max_tokens=100,
+            max_tokens=LLM_CLASSIFY_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        if not text.strip():
+            logger.warning(
+                "LLM classification returned empty content (finish_reason=%s); "
+                "falling back to keyword matching.", choice.finish_reason,
+            )
+            return None
         import json
         text = text.strip().strip("`")
         if text.startswith("json"):
@@ -139,7 +156,11 @@ def _llm_classify(message: str) -> ClassificationResult | None:
             method=ClassificationMethod.LLM,
             raw_message=message,
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "LLM classification failed (%s: %s); falling back to keyword matching.",
+            type(exc).__name__, exc,
+        )
         return None
 
 

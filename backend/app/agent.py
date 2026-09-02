@@ -261,10 +261,23 @@ Respond with ONLY a JSON object, no other text:
 """
 
 
+# Token budget for one decision call. GROQ_MODEL defaults to a *reasoning*
+# model (gpt-oss-120b) whose internal reasoning tokens are billed against
+# max_tokens BEFORE any visible content is emitted. At 400 this sat right on
+# the boundary -- observed live: completion_tokens=323 succeeded, but a
+# slightly longer chain hit finish_reason="length" and returned EMPTY content,
+# which failed JSON parsing and silently escalated the case to human review.
+# 1500 leaves real headroom (observed usage ~410-430 tokens).
+LLM_DECIDE_MAX_TOKENS = 1500
+
+
 def _llm_decide(context: dict) -> AgentDecisionResult | None:
-    """Returns None on any failure -- caller applies the safe FLAGGED_FOR_REVIEW fallback."""
+    """Returns None on any failure -- caller applies the safe FLAGGED_FOR_REVIEW
+    fallback. Every failure path is logged: a silent `except: return None` is
+    why a real failure of this call stayed invisible through testing."""
     if not settings.GROQ_API_KEY:
         return None
+    payment_id = context.get("payment_id", "<unknown>")
     try:
         from groq import Groq
         # Bounded like the classifier: never let a slow/retrying API call stall
@@ -273,13 +286,24 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
         user_prompt = "Recovery case context:\n" + json.dumps(context, indent=2)
         resp = client.chat.completions.create(
             model=settings.GROQ_MODEL,
-            max_tokens=400,
+            max_tokens=LLM_DECIDE_MAX_TOKENS,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
         )
-        text = (resp.choices[0].message.content or "").strip()
+        choice = resp.choices[0]
+        text = (choice.message.content or "").strip()
+
+        if not text:
+            # Almost always finish_reason="length" on a reasoning model: the
+            # budget was spent thinking and nothing was left for the answer.
+            logger.warning(
+                "LLM decision for %s returned empty content (finish_reason=%s); "
+                "falling back to human review.", payment_id, choice.finish_reason,
+            )
+            return None
+
         text = text.strip("`")
         if text.startswith("json"):
             text = text[4:].strip()
@@ -287,7 +311,12 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
 
         action = data["action"]
         if action not in ALLOWED_ACTIONS:
-            return None  # agent invented an action -- treat as failure, never execute it
+            # Agent invented an action -- treat as failure, never execute it.
+            logger.warning(
+                "LLM decision for %s proposed out-of-vocabulary action %r; rejected.",
+                payment_id, action,
+            )
+            return None
 
         return AgentDecisionResult(
             decision=DecisionType(data["decision"]),
@@ -297,7 +326,11 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
             agent_mode=AgentMode.LLM,
             raw=data,
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "LLM decision for %s failed (%s: %s); falling back to human review.",
+            payment_id, type(exc).__name__, exc,
+        )
         return None
 
 
@@ -412,6 +445,25 @@ def _routing_reason(context: dict, heuristic: AgentDecisionResult) -> str | None
     if (amount >= settings.HIGH_VALUE_THRESHOLD
             and attempts >= settings.LLM_ROUTE_HIGH_VALUE_MIN_ATTEMPTS):
         return f"Rs {amount:,.0f} high-value with {attempts} prior attempt(s)"
+
+    # 4. Accumulated evidence the fit table structurally cannot represent.
+    #    _ACTION_FIT is keyed on failure_type alone: it has no slot for "we already
+    #    tried this and it failed" or "they clicked and still didn't pay". Those are
+    #    precisely the cases where the heuristic is reasoning from a table that has
+    #    forgotten the case's own history, and where an LLM reading the full context
+    #    has something real to add.
+    if settings.LLM_ROUTE_ON_PRIOR_EVIDENCE:
+        if attempts >= 1 and context.get("previous_outcome") == "FAILED":
+            prev_action = context.get("previous_recovery_action")
+            tried = f" ({prev_action})" if prev_action else ""
+            plural = "s" if attempts != 1 else ""
+            return (f"{attempts} prior attempt{plural} failed{tried}; "
+                    f"fit table has no memory of it")
+
+        if (context.get("customer_engagement") == "LINK_CLICKED"
+                and context.get("status") != "RECOVERED"):
+            return ("customer clicked the recovery link but the payment is still "
+                    "unrecovered; fit table cannot represent that contradiction")
 
     return None
 

@@ -67,9 +67,17 @@ def run_evaluation(db: Session, dataset_size: int = 300, seed: int | None = None
                     agent_mode: str | None = None, demo_email: str | None = None,
                     demo_email_count: int = 1) -> dict:
     # The 300-case benchmark must be byte-reproducible, so it can never make
-    # network calls. ROUTED would fire LLM requests on a subset of cases and
-    # silently destroy that guarantee -- coerce it, loudly.
-    if agent_mode and agent_mode.upper() == AgentMode.ROUTED.value:
+    # network calls. Pin the engine here.
+    #
+    # agent_mode=None is the dangerous case, not just an explicit "ROUTED":
+    # None propagates all the way down to agent.decide(), which then falls back
+    # to settings.AGENT_MODE. With AGENT_MODE=ROUTED in the environment that
+    # silently turned every batch run into hundreds of live LLM calls -- exactly
+    # the guarantee this is supposed to protect. Default to HEURISTIC, and coerce
+    # an explicit ROUTED loudly.
+    if agent_mode is None:
+        agent_mode = AgentMode.HEURISTIC.value
+    elif agent_mode.upper() == AgentMode.ROUTED.value:
         logger.warning(
             "run_evaluation() was passed agent_mode=ROUTED; coercing to HEURISTIC. "
             "Batch evaluation must stay deterministic and offline."

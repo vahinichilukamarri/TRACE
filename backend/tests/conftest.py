@@ -6,6 +6,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_agent_mode(monkeypatch):
+    """Pin the agent to HEURISTIC for the whole suite.
+
+    AGENT_MODE is read from .env, so a developer running with ROUTED (or LLM)
+    and a real key would have the test suite make live, billed, non-deterministic
+    network calls -- observed: the suite went from ~21s to minutes. Tests that
+    exercise routing pass mode= explicitly or monkeypatch settings themselves.
+    """
+    from app.config import settings
+    monkeypatch.setattr(settings, "AGENT_MODE", "HEURISTIC")
+
+
 @pytest.fixture()
 def db_session(monkeypatch):
     """Fresh, isolated SQLite file per test so tests never share state."""

@@ -65,7 +65,9 @@ def decisions_breakdown(eval_run_id: str | None = None, system: str = "TRACE", d
     ).all()]
     if not case_ids:
         return {"eval_run_id": run_id, "actions_selected": [], "policy_results": [],
-                "total_decisions": 0, "llm_routed_decisions": 0, "llm_routed_pct": 0.0}
+                "total_live_decisions": 0, "llm_routed_decisions": 0, "llm_routed_pct": 0.0,
+                "total_decisions": 0, "llm_routed_decisions_in_run": 0,
+                "llm_routed_pct_in_run": 0.0, "note": "No cases in this run."}
 
     action_rows = (
         db.query(AgentDecisionRecord.action, func.count(AgentDecisionRecord.id))
@@ -79,28 +81,64 @@ def decisions_breakdown(eval_run_id: str | None = None, system: str = "TRACE", d
         .group_by(PolicyCheckRecord.result)
         .all()
     )
-    # How much of the workload actually needed AI reasoning. Computed from the
-    # persisted engine that decided each case, so it stays truthful regardless of
-    # which mode the app is configured in.
+    # Decision counts for the selected benchmark run. These stay force-HEURISTIC
+    # by design, so their LLM share is structurally zero -- kept under their own
+    # keys rather than reported as "the AI never runs".
     total_decisions = (
         db.query(func.count(AgentDecisionRecord.id))
         .filter(AgentDecisionRecord.case_id.in_(case_ids))
         .scalar()
     ) or 0
-    llm_routed = (
+    llm_routed_in_run = (
         db.query(func.count(AgentDecisionRecord.id))
         .filter(AgentDecisionRecord.case_id.in_(case_ids),
                 AgentDecisionRecord.agent_mode == AgentMode.LLM.value)
         .scalar()
     ) or 0
 
+    # The headline routing stat is scoped to LIVE cases (no eval_run_id): that is
+    # the only population where ROUTED mode actually dispatches, so it is the only
+    # honest answer to "what share of decisions needed AI reasoning?".
+    live_case_ids = [
+        c.id for c in db.query(RecoveryCase.id).filter(
+            RecoveryCase.eval_run_id.is_(None)
+        ).all()
+    ]
+    if live_case_ids:
+        total_live = (
+            db.query(func.count(AgentDecisionRecord.id))
+            .filter(AgentDecisionRecord.case_id.in_(live_case_ids))
+            .scalar()
+        ) or 0
+        llm_routed_live = (
+            db.query(func.count(AgentDecisionRecord.id))
+            .filter(AgentDecisionRecord.case_id.in_(live_case_ids),
+                    AgentDecisionRecord.agent_mode == AgentMode.LLM.value)
+            .scalar()
+        ) or 0
+    else:
+        total_live, llm_routed_live = 0, 0
+
     return {
         "eval_run_id": run_id,
         "actions_selected": [{"action": a, "count": c} for a, c in action_rows],
         "policy_results": [{"result": r, "count": c} for r, c in policy_rows],
+        # Live-scoped routing stat (the headline).
+        "total_live_decisions": total_live,
+        "llm_routed_decisions": llm_routed_live,
+        "llm_routed_pct": round(llm_routed_live / total_live, 4) if total_live else 0.0,
+        # Benchmark-run totals, kept separate.
         "total_decisions": total_decisions,
-        "llm_routed_decisions": llm_routed,
-        "llm_routed_pct": round(llm_routed / total_decisions, 4) if total_decisions else 0.0,
+        "llm_routed_decisions_in_run": llm_routed_in_run,
+        "llm_routed_pct_in_run": (
+            round(llm_routed_in_run / total_decisions, 4) if total_decisions else 0.0
+        ),
+        "note": (
+            "llm_routed_* is measured over live ingested cases only. Benchmark "
+            "evaluation runs are forced to the deterministic HEURISTIC engine by "
+            "design, so they are reproducible and make no network calls -- their "
+            "LLM share is structurally zero, not evidence that routing is idle."
+        ),
     }
 
 

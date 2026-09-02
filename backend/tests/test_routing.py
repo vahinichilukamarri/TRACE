@@ -52,10 +52,10 @@ def test_confident_classification_does_not_route():
 # --- trigger 2: top-two expected values too close ------------------------
 
 def test_narrow_ev_margin_routes_to_llm():
-    # CARD_DECLINED's top two candidates (SUGGEST_ALTERNATIVE_METHOD 0.60 vs
-    # SEND_RECOVERY_LINK 0.55) sit ~8% apart -- inside the 10% margin, so the
-    # argmax is separating noise and the case deserves real reasoning.
-    ctx = base_context(failure_type="CARD_DECLINED", classification_confidence=0.95)
+    # PROCESSING_ERROR's top two candidates are genuinely tied (RETRY_PAYMENT and
+    # WAIT_AND_REASSESS are both 0.35), so the argmax is pure tie-breaking noise.
+    # CARD_DECLINED's 8.3% gap deliberately no longer qualifies at the 5% margin.
+    ctx = base_context(failure_type="PROCESSING_ERROR", classification_confidence=0.95)
     scored = _heuristic_decide(ctx).raw["scored_actions"]
     gap = (scored[0][2] - scored[1][2]) / scored[0][2]
     assert gap < settings.LLM_ROUTE_EV_MARGIN_PCT, f"fixture gap {gap:.0%} not narrow"
@@ -177,3 +177,116 @@ def test_routed_batch_matches_heuristic_batch_exactly(db_session):
     a = run_evaluation(db_session, dataset_size=20, seed=99, agent_mode="ROUTED")
     b = run_evaluation(db_session, dataset_size=20, seed=99, agent_mode="HEURISTIC")
     assert a["results"] == b["results"]
+
+
+# --- trigger 4: accumulated evidence the fit table cannot represent --------
+
+def test_failed_prior_attempt_routes_on_evidence():
+    """_ACTION_FIT is keyed on failure_type alone -- it has no slot for 'we
+    already tried this and it failed', so that case is exactly where the
+    heuristic is reasoning from a table that forgot the case's own history."""
+    ctx = base_context(
+        failure_type="AUTH_FAILURE",          # wide EV gap, so trigger 2 can't fire
+        classification_confidence=0.95,        # trigger 1 can't fire
+        amount=4000,                           # trigger 3 can't fire
+        previous_recovery_attempts=1,
+        previous_recovery_action="SEND_RECOVERY_LINK",
+        previous_outcome="FAILED",
+    )
+    reason = reason_for(ctx)
+    assert reason is not None
+    assert "prior attempt" in reason and "SEND_RECOVERY_LINK" in reason
+    assert "fit table has no memory" in reason
+
+
+def test_link_clicked_but_unrecovered_routes_on_evidence():
+    """A genuine contradiction: the customer engaged but still didn't pay."""
+    ctx = base_context(
+        failure_type="AUTH_FAILURE",
+        classification_confidence=0.95,
+        amount=4000,
+        previous_recovery_attempts=0,
+        previous_outcome=None,
+        customer_engagement="LINK_CLICKED",
+        status="OPEN",
+    )
+    reason = reason_for(ctx)
+    assert reason is not None
+    assert "clicked" in reason and "unrecovered" in reason
+
+
+def test_clean_first_pass_case_does_not_route():
+    """No history, confident classification, wide EV gap, ordinary amount:
+    the heuristic answer stands on its own and costs nothing."""
+    ctx = base_context(
+        failure_type="AUTH_FAILURE",
+        classification_confidence=0.95,
+        amount=4000,
+        previous_recovery_attempts=0,
+        previous_recovery_action=None,
+        previous_outcome=None,
+        customer_engagement="NONE",
+    )
+    assert reason_for(ctx) is None
+
+
+def test_evidence_trigger_respects_its_config_flag(monkeypatch):
+    ctx = base_context(
+        failure_type="AUTH_FAILURE", classification_confidence=0.95, amount=4000,
+        previous_recovery_attempts=1, previous_recovery_action="RETRY_PAYMENT",
+        previous_outcome="FAILED",
+    )
+    assert reason_for(ctx) is not None
+    monkeypatch.setattr(settings, "LLM_ROUTE_ON_PRIOR_EVIDENCE", False)
+    assert reason_for(ctx) is None
+
+
+def test_hard_stops_still_short_circuit_before_the_evidence_trigger():
+    """A hard stop carries maximal 'evidence' (failed attempts, engagement) yet
+    must never route -- it is a safety rule, not a judgement call."""
+    ctx = base_context(
+        remaining_recovery_opportunities=0,          # hard stop
+        previous_recovery_attempts=3,
+        previous_recovery_action="SEND_RECOVERY_LINK",
+        previous_outcome="FAILED",
+        customer_engagement="LINK_CLICKED",
+        amount=999999,
+    )
+    h = _heuristic_decide(ctx)
+    assert h.raw.get("hard_stop") is True
+    assert _routing_reason(ctx, h) is None
+
+
+def test_ev_margin_default_is_tight_enough_to_not_be_a_type_lookup():
+    """At a 10% margin, trigger 2 fired on 91% of CARD_DECLINED purely because
+    that type's top-two base fits sit 8.3% apart. The default must be below it."""
+    assert settings.LLM_ROUTE_EV_MARGIN_PCT <= 0.05
+    ctx = base_context(failure_type="CARD_DECLINED", classification_confidence=0.95)
+    scored = _heuristic_decide(ctx).raw["scored_actions"]
+    gap = (scored[0][2] - scored[1][2]) / scored[0][2]
+    assert gap >= settings.LLM_ROUTE_EV_MARGIN_PCT, (
+        "a clean CARD_DECLINED case must no longer route on the EV margin alone"
+    )
+
+
+def test_run_evaluation_ignores_a_routed_global_agent_mode(db_session, monkeypatch):
+    """The dangerous case is agent_mode=None, not an explicit "ROUTED".
+
+    /evaluation/run calls run_evaluation() without an agent_mode, so None used to
+    propagate all the way to decide(), which falls back to settings.AGENT_MODE.
+    With AGENT_MODE=ROUTED in the environment that silently turned the benchmark
+    into hundreds of live LLM calls -- non-reproducible, slow, and billed."""
+    from app.evaluation.runner import run_evaluation
+    from app.models import AgentDecisionRecord
+    import app.agent as agent_mod
+
+    monkeypatch.setattr(settings, "AGENT_MODE", "ROUTED")
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "fake-key-present")
+
+    def explode(_ctx):
+        raise AssertionError("batch evaluation must never call the LLM")
+    monkeypatch.setattr(agent_mod, "_llm_decide", explode)
+
+    run_evaluation(db_session, dataset_size=12, seed=7)   # no agent_mode passed
+    modes = {m[0] for m in db_session.query(AgentDecisionRecord.agent_mode).distinct().all()}
+    assert modes == {"HEURISTIC"}, f"batch leaked a non-heuristic engine: {modes}"

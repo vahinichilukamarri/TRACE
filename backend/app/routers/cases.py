@@ -73,6 +73,16 @@ def ingest_event(event: schemas.PaymentEventIn, run_first_iteration: bool = True
 
     rng = random.Random()
     step = run_iteration(db, case, rng, iteration=0, auto_resolve=False)
+
+    # Ingest executes a real action just like a reassessment does, so the case
+    # has to move forward here too. Without this the first /reassess re-decided
+    # a context that pretended the ingest action never happened, and produced a
+    # byte-identical repeat of decision 0.
+    if case.status not in TERMINAL_STATUSES:
+        action = step["execution"].action if step["execution"] else None
+        advance_case_state(case, action, step["outcome"], rng)
+        db.flush()
+
     db.commit()
     db.refresh(case)
 
