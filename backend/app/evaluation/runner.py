@@ -7,6 +7,7 @@ using matched per-case randomness so differences in outcome are driven by
 the *decisions* made, not by lucky/unlucky draws of the RNG.
 """
 import random
+import threading
 import uuid
 
 from sqlalchemy import text
@@ -18,6 +19,13 @@ from app.engine import ensure_classified, run_to_completion
 from app.baseline import run_baseline
 from app.evaluation.metrics import compute_metrics
 from app.config import settings
+
+
+# A batch run is long and write-heavy, and SQLite allows only one writer.
+# Serialize runs process-wide. The lock lives here, beside the operation it
+# guards, so the API route and the startup auto-seed share ONE lock instead
+# of each defining their own and racing each other.
+EVAL_RUN_LOCK = threading.Lock()
 
 
 def _case_seed(global_seed: int, index: int) -> int:

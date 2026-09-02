@@ -13,6 +13,13 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off", "")
+
+
 class Settings:
     # --- Database ---
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'trace.db'}")
@@ -56,6 +63,14 @@ class Settings:
     # --- Simulation ---
     SIMULATION_SEED: int = int(os.getenv("SIMULATION_SEED", "42"))
     DEFAULT_BATCH_SIZE: int = int(os.getenv("DEFAULT_BATCH_SIZE", "300"))
+
+    # --- Startup auto-seed ---
+    # A freshly deployed instance has an empty database, so every dashboard
+    # endpoint 404s and the app opens looking broken. Seed one evaluation run
+    # on boot so a deployed link always lands on real, populated data.
+    # Set AUTO_SEED_ON_STARTUP=false to skip it (e.g. local development).
+    AUTO_SEED_ON_STARTUP: bool = _env_bool("AUTO_SEED_ON_STARTUP", True)
+    AUTO_SEED_SIZE: int = int(os.getenv("AUTO_SEED_SIZE", str(DEFAULT_BATCH_SIZE)))
 
     # --- App ---
     APP_NAME: str = "TRACE"

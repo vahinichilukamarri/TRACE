@@ -1,26 +1,19 @@
 import random
-import threading
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import schemas
-from app.evaluation.runner import run_evaluation, get_run
+from app.evaluation.runner import run_evaluation, get_run, EVAL_RUN_LOCK
 from app.models import EvaluationRun
 
 router = APIRouter(prefix="/evaluation", tags=["evaluation"])
 
-# A batch run is a long, write-heavy job and SQLite allows only one writer.
-# Serialize runs process-wide: a second concurrent POST /evaluation/run gets
-# a clean 409 instead of racing the first for the write lock (which used to
-# leave a half-finished run and a stranded transaction holding the lock).
-_eval_run_lock = threading.Lock()
-
 
 @router.post("/run", response_model=schemas.EvaluationRunOut)
 def trigger_evaluation(req: schemas.EvaluationRunRequest, db: Session = Depends(get_db)):
-    if not _eval_run_lock.acquire(blocking=False):
+    if not EVAL_RUN_LOCK.acquire(blocking=False):
         raise HTTPException(409, "An evaluation run is already in progress; wait for it to finish.")
     # A request that does not pin a seed means "give me a NEW batch". Falling
     # through to settings.SIMULATION_SEED would replay the identical dataset
@@ -39,7 +32,7 @@ def trigger_evaluation(req: schemas.EvaluationRunRequest, db: Session = Depends(
         db.rollback()
         raise
     finally:
-        _eval_run_lock.release()
+        EVAL_RUN_LOCK.release()
 
 
 @router.get("/runs/{run_id}", response_model=schemas.EvaluationRunOut)

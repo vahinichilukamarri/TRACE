@@ -31,11 +31,18 @@ def db_session(monkeypatch):
 
 
 @pytest.fixture()
-def client(db_session):
+def client(db_session, monkeypatch):
     """FastAPI TestClient wired to the isolated db_session fixture."""
     from fastapi.testclient import TestClient
     from app.main import app
     from app.database import get_db
+    from app.config import settings
+
+    # Entering TestClient as a context manager fires the startup hook. Leave
+    # auto-seed on and every client-using test would run a full evaluation
+    # batch into the REAL trace.db -- slow, and it would pollute the developer's
+    # database. Tests that want data create it explicitly.
+    monkeypatch.setattr(settings, "AUTO_SEED_ON_STARTUP", False)
 
     def override_get_db():
         yield db_session
