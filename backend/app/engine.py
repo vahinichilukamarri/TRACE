@@ -71,6 +71,7 @@ def run_iteration(db: Session, case: RecoveryCase, rng: random.Random, agent_mod
         expected_value=decision_result.expected_value,
         intervention_cost=decision_result.intervention_cost,
         net_expected_value=decision_result.net_expected_value,
+        route_reason=decision_result.route_reason,
     )
     db.add(decision_record)
     db.flush()
@@ -83,6 +84,7 @@ def run_iteration(db: Session, case: RecoveryCase, rng: random.Random, agent_mod
         "is_fallback": decision_record.is_fallback,
         "iteration": iteration,
         "net_expected_value": decision_record.net_expected_value,
+        "route_reason": decision_record.route_reason,
     })
     if decision_result.is_fallback:
         log_event(db, case.id, AuditEventType.AGENT_FALLBACK,

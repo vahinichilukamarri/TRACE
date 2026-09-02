@@ -109,6 +109,13 @@ def seed_initial_evaluation() -> None:
 @app.on_event("startup")
 def on_startup():
     init_db()
+    if settings.AGENT_MODE.upper() == "ROUTED" and not settings.GROQ_API_KEY:
+        # Not fatal: routing means "would benefit from an LLM", not "requires
+        # one". Every case still decides via the heuristic.
+        logger.warning(
+            "AGENT_MODE=ROUTED but GROQ_API_KEY is empty -- every case will be "
+            "decided by the heuristic engine. Set GROQ_API_KEY to enable routing."
+        )
     seed_initial_evaluation()
 
 

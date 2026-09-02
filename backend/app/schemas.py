@@ -45,6 +45,7 @@ class AgentDecisionOut(BaseModel):
     expected_value: Optional[float] = None
     intervention_cost: Optional[float] = None
     net_expected_value: Optional[float] = None
+    route_reason: Optional[str] = None
     created_at: datetime
 
     class Config:

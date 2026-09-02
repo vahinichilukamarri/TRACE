@@ -8,6 +8,7 @@ from app.models import (
     EvaluationResult, ExecutionRecord,
 )
 from app.evaluation.metrics import compute_metrics, ACTIVE_INTERVENTION_ACTIONS
+from app.enums import AgentMode
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -63,7 +64,8 @@ def decisions_breakdown(eval_run_id: str | None = None, system: str = "TRACE", d
         RecoveryCase.eval_run_id == run_id, RecoveryCase.system == system
     ).all()]
     if not case_ids:
-        return {"eval_run_id": run_id, "actions_selected": [], "policy_results": []}
+        return {"eval_run_id": run_id, "actions_selected": [], "policy_results": [],
+                "total_decisions": 0, "llm_routed_decisions": 0, "llm_routed_pct": 0.0}
 
     action_rows = (
         db.query(AgentDecisionRecord.action, func.count(AgentDecisionRecord.id))
@@ -77,10 +79,28 @@ def decisions_breakdown(eval_run_id: str | None = None, system: str = "TRACE", d
         .group_by(PolicyCheckRecord.result)
         .all()
     )
+    # How much of the workload actually needed AI reasoning. Computed from the
+    # persisted engine that decided each case, so it stays truthful regardless of
+    # which mode the app is configured in.
+    total_decisions = (
+        db.query(func.count(AgentDecisionRecord.id))
+        .filter(AgentDecisionRecord.case_id.in_(case_ids))
+        .scalar()
+    ) or 0
+    llm_routed = (
+        db.query(func.count(AgentDecisionRecord.id))
+        .filter(AgentDecisionRecord.case_id.in_(case_ids),
+                AgentDecisionRecord.agent_mode == AgentMode.LLM.value)
+        .scalar()
+    ) or 0
+
     return {
         "eval_run_id": run_id,
         "actions_selected": [{"action": a, "count": c} for a, c in action_rows],
         "policy_results": [{"result": r, "count": c} for r, c in policy_rows],
+        "total_decisions": total_decisions,
+        "llm_routed_decisions": llm_routed,
+        "llm_routed_pct": round(llm_routed / total_decisions, 4) if total_decisions else 0.0,
     }
 
 

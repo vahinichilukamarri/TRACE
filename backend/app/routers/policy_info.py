@@ -26,6 +26,21 @@ def get_policy_config():
         "agent_min_confidence": settings.AGENT_MIN_CONFIDENCE,
         "max_reassessment_iterations": settings.MAX_REASSESSMENT_ITERATIONS,
         "agent_mode": settings.AGENT_MODE,
+        "llm_routing": {
+            "min_classification_confidence": settings.LLM_ROUTE_MIN_CLASSIFICATION_CONFIDENCE,
+            "ev_margin_pct": settings.LLM_ROUTE_EV_MARGIN_PCT,
+            "high_value_min_attempts": settings.LLM_ROUTE_HIGH_VALUE_MIN_ATTEMPTS,
+            "high_value_threshold": settings.HIGH_VALUE_THRESHOLD,
+            "active": settings.AGENT_MODE.upper() == "ROUTED",
+            "llm_available": bool(settings.GROQ_API_KEY),
+            "note": (
+                "In ROUTED mode the deterministic heuristic runs on every case and the "
+                "LLM is called only when the heuristic is not trustworthy on its own: an "
+                "uncertain failure classification, a top-two expected-value gap inside the "
+                "margin, or a high-value transaction that has already failed a recovery "
+                "attempt. Every decision records which engine ran and why, in route_reason."
+            ),
+        },
         "allowed_actions": [a.value for a in ActionType],
         "recovery_window_overrides": {
             "by_failure_type": RECOVERY_WINDOW_BY_FAILURE_TYPE,

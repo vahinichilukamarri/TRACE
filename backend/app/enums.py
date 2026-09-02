@@ -94,3 +94,6 @@ class SystemType(str, Enum):
 class AgentMode(str, Enum):
     HEURISTIC = "HEURISTIC"  # deterministic scoring engine, no API calls
     LLM = "LLM"  # real Groq API call, structured output
+    ROUTED = "ROUTED"  # per-case: heuristic first, escalate to LLM when it earns its cost
+    # NOTE: ROUTED is a *dispatch* mode, never a result. The agent_mode
+    # persisted on a decision is always the engine that actually decided.

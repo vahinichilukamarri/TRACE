@@ -30,6 +30,22 @@ class Settings:
     GROQ_MODEL: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     AGENT_MIN_CONFIDENCE: float = float(os.getenv("AGENT_MIN_CONFIDENCE", "0.5"))
 
+    # --- ROUTED mode: when is an LLM call worth its cost? ---
+    # The heuristic runs first on every case (free, deterministic). These
+    # thresholds decide when its answer is not trustworthy enough to stand on
+    # its own and a real reasoning call earns the ~Rs 0.50 it costs.
+    # Below this classification confidence the heuristic is picking actions
+    # from a table keyed on a failure_type that is itself a guess.
+    LLM_ROUTE_MIN_CLASSIFICATION_CONFIDENCE: float = float(
+        os.getenv("LLM_ROUTE_MIN_CLASSIFICATION_CONFIDENCE", "0.6"))
+    # If the top two candidate actions are within this fraction of each other,
+    # the argmax is separating noise, not signal.
+    LLM_ROUTE_EV_MARGIN_PCT: float = float(os.getenv("LLM_ROUTE_EV_MARGIN_PCT", "0.10"))
+    # High-value transactions that have already failed at least this many
+    # recovery attempts: the expected cost of being wrong dwarfs inference cost.
+    LLM_ROUTE_HIGH_VALUE_MIN_ATTEMPTS: int = int(
+        os.getenv("LLM_ROUTE_HIGH_VALUE_MIN_ATTEMPTS", "1"))
+
     # --- Policy ---
     MAX_RECOVERY_ATTEMPTS: int = int(os.getenv("MAX_RECOVERY_ATTEMPTS", "3"))
     RECOVERY_WINDOW_MINUTES: int = int(os.getenv("RECOVERY_WINDOW_MINUTES", "4320"))  # 3 days

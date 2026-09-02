@@ -6,6 +6,7 @@ policy-controlled, reassessing agent) and the static baseline workflow,
 using matched per-case randomness so differences in outcome are driven by
 the *decisions* made, not by lucky/unlucky draws of the RNG.
 """
+import logging
 import random
 import threading
 import uuid
@@ -19,6 +20,9 @@ from app.engine import ensure_classified, run_to_completion
 from app.baseline import run_baseline
 from app.evaluation.metrics import compute_metrics
 from app.config import settings
+from app.enums import AgentMode
+
+logger = logging.getLogger("uvicorn.error")
 
 
 # A batch run is long and write-heavy, and SQLite allows only one writer.
@@ -62,6 +66,16 @@ def _make_recovery_case(db: Session, sc: SyntheticCase, system: str, eval_run_id
 def run_evaluation(db: Session, dataset_size: int = 300, seed: int | None = None,
                     agent_mode: str | None = None, demo_email: str | None = None,
                     demo_email_count: int = 1) -> dict:
+    # The 300-case benchmark must be byte-reproducible, so it can never make
+    # network calls. ROUTED would fire LLM requests on a subset of cases and
+    # silently destroy that guarantee -- coerce it, loudly.
+    if agent_mode and agent_mode.upper() == AgentMode.ROUTED.value:
+        logger.warning(
+            "run_evaluation() was passed agent_mode=ROUTED; coercing to HEURISTIC. "
+            "Batch evaluation must stay deterministic and offline."
+        )
+        agent_mode = AgentMode.HEURISTIC.value
+
     seed = seed if seed is not None else settings.SIMULATION_SEED
     dataset = generate_dataset(dataset_size, seed)
 

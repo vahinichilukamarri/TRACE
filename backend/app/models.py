@@ -116,6 +116,7 @@ class AgentDecisionRecord(Base):
     expected_value = Column(Float, nullable=True)          # amount * estimated recovery probability (INR)
     intervention_cost = Column(Float, nullable=True)       # rough operating cost of the chosen action (INR)
     net_expected_value = Column(Float, nullable=True)      # expected_value - intervention_cost (INR)
+    route_reason = Column(String, nullable=True)           # ROUTED mode: why this engine was chosen
     created_at = Column(DateTime, default=datetime.utcnow)
 
     case = relationship("RecoveryCase", back_populates="decisions")

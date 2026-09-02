@@ -21,12 +21,16 @@ Both engines return an AgentDecisionResult with the same shape, so
 everything downstream (policy, execution, audit) is engine-agnostic.
 """
 import json
+import logging
 from dataclasses import dataclass, field
 
 from app.enums import ActionType, DecisionType, AgentMode, FailureType
 from app.config import settings
 
 ALLOWED_ACTIONS = {a.value for a in ActionType}
+
+# uvicorn configures this logger, so warnings land in deployment logs.
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass
@@ -41,6 +45,8 @@ class AgentDecisionResult:
     expected_value: float = 0.0
     intervention_cost: float = 0.0
     net_expected_value: float = 0.0
+    # ROUTED mode only: why this engine was chosen for this case.
+    route_reason: str | None = None
 
 
 # Only these actions directly attempt to recover the payment on this turn.
@@ -131,6 +137,7 @@ def _heuristic_decide(context: dict) -> AgentDecisionResult:
             confidence=0.95,
             reasoning="No remaining recovery opportunities for this transaction.",
             agent_mode=AgentMode.HEURISTIC,
+            raw={"hard_stop": True},
         )
 
     if classification_confidence < 0.35:
@@ -140,6 +147,7 @@ def _heuristic_decide(context: dict) -> AgentDecisionResult:
             confidence=classification_confidence,
             reasoning="Failure classification confidence is too low to safely automate a decision.",
             agent_mode=AgentMode.HEURISTIC,
+            raw={"hard_stop": True},
         )
 
     # Candidate actions for this failure type, excluding one already tried
@@ -178,6 +186,7 @@ def _heuristic_decide(context: dict) -> AgentDecisionResult:
 
     scored.sort(key=lambda t: t[2], reverse=True)
     best_action, best_prob, best_ev = scored[0]
+    scored_raw = {"scored_actions": [(a.value, round(p, 3), round(ev, 2)) for a, p, ev in scored]}
 
     # Decide whether recovery is worth pursuing at all
     low_value_and_exhausted = best_ev < MIN_EXPECTED_VALUE and prev_attempts >= 2
@@ -194,6 +203,7 @@ def _heuristic_decide(context: dict) -> AgentDecisionResult:
                 f"success rate."
             ),
             agent_mode=AgentMode.HEURISTIC,
+            raw=scored_raw,
         )
 
     # Very high value + repeated failures -> escalate rather than keep auto-acting
@@ -207,6 +217,7 @@ def _heuristic_decide(context: dict) -> AgentDecisionResult:
                 "warrants human review rather than continued automated action."
             ),
             agent_mode=AgentMode.HEURISTIC,
+            raw=scored_raw,
         )
 
     confidence = round(min(0.5 + best_prob * 0.5, 0.95), 2)
@@ -224,7 +235,7 @@ def _heuristic_decide(context: dict) -> AgentDecisionResult:
         confidence=confidence,
         reasoning=reasoning,
         agent_mode=AgentMode.HEURISTIC,
-        raw={"scored_actions": [(a.value, round(p, 3), round(ev, 2)) for a, p, ev in scored]},
+        raw=scored_raw,
     )
 
 
@@ -343,6 +354,103 @@ def _attach_expected_value(context: dict, result: AgentDecisionResult) -> None:
 
 
 # ---------------------------------------------------------------------
+# ROUTED mode: per-case engine selection
+# ---------------------------------------------------------------------
+
+HEURISTIC_SUFFICIENT = "heuristic sufficient"
+
+_missing_key_warned = False
+
+
+def _warn_missing_key_once() -> None:
+    global _missing_key_warned
+    if not _missing_key_warned:
+        _missing_key_warned = True
+        logger.warning(
+            "AGENT_MODE=ROUTED but GROQ_API_KEY is empty: cases that would benefit "
+            "from LLM reasoning will use the heuristic result instead. Set GROQ_API_KEY "
+            "to enable real routing."
+        )
+
+
+def _routing_reason(context: dict, heuristic: AgentDecisionResult) -> str | None:
+    """Should this case escalate to the LLM? Returns the reason, or None.
+
+    The heuristic has already run (it is free and deterministic), and its
+    internals tell us whether it is actually confident. We only pay for
+    inference when the expected cost of being wrong exceeds the cost of
+    thinking harder.
+    """
+    # Hard stops are safety rules, not judgement calls. There is nothing an LLM
+    # can add when the case has no recovery opportunities left, or when the
+    # failure type is too uncertain to act on at all -- these short-circuit.
+    if heuristic.raw.get("hard_stop"):
+        return None
+
+    # 1. Uncertain classification. The heuristic picks from a table keyed on
+    #    failure_type; if the type is a guess, the table is standing on sand.
+    confidence = context.get("classification_confidence")
+    floor = settings.LLM_ROUTE_MIN_CLASSIFICATION_CONFIDENCE
+    if confidence is not None and confidence < floor:
+        return f"classification confidence {confidence:.2f} below {floor:.2f}"
+
+    # 2. Too close to call. If the top two candidates are within the margin,
+    #    the argmax is separating noise rather than signal.
+    scored = heuristic.raw.get("scored_actions") or []
+    if len(scored) >= 2:
+        top_ev, second_ev = scored[0][2], scored[1][2]
+        if top_ev > 0:
+            gap = (top_ev - second_ev) / top_ev
+            if gap < settings.LLM_ROUTE_EV_MARGIN_PCT:
+                return (f"top-two EV gap {gap:.0%} below "
+                        f"{settings.LLM_ROUTE_EV_MARGIN_PCT:.0%} margin")
+
+    # 3. Stakes justify deliberation. An LLM call costs ~Rs 0.50; a wrong call
+    #    on a high-value transaction costs the transaction.
+    amount = context.get("amount") or 0.0
+    attempts = context.get("previous_recovery_attempts") or 0
+    if (amount >= settings.HIGH_VALUE_THRESHOLD
+            and attempts >= settings.LLM_ROUTE_HIGH_VALUE_MIN_ATTEMPTS):
+        return f"Rs {amount:,.0f} high-value with {attempts} prior attempt(s)"
+
+    return None
+
+
+def _routed_decide(context: dict) -> AgentDecisionResult:
+    """Run the heuristic on every case; escalate to the LLM only when it earns
+    its cost. The returned result's agent_mode is always the engine that
+    ACTUALLY decided (HEURISTIC or LLM) -- never ROUTED, which is a dispatch
+    mode, not a reasoner."""
+    heuristic = _heuristic_decide(context)
+    reason = _routing_reason(context, heuristic)
+
+    if reason is None:
+        heuristic.route_reason = HEURISTIC_SUFFICIENT
+        return heuristic
+
+    if not settings.GROQ_API_KEY:
+        # Routing means "would benefit from an LLM", not "requires one". With no
+        # key configured we keep the heuristic answer rather than escalating to a
+        # human -- a fresh clone with no key must still be a fully working app.
+        _warn_missing_key_once()
+        heuristic.route_reason = f"{reason}; no GROQ_API_KEY, kept heuristic"
+        return heuristic
+
+    llm_result = _llm_decide(context)
+    if llm_result is None:
+        # A genuine mid-flight failure is NOT the same as never having tried.
+        # Something was asked to reason and failed, so per spec section 20 that
+        # surfaces as FLAGGED_FOR_REVIEW. Silently substituting the heuristic
+        # answer here would misrepresent what actually decided this case.
+        fallback = _llm_failure_fallback()
+        fallback.route_reason = f"{reason}; LLM call failed"
+        return fallback
+
+    llm_result.route_reason = reason
+    return llm_result
+
+
+# ---------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------
 
@@ -352,6 +460,8 @@ def decide(context: dict, mode: str | None = None) -> AgentDecisionResult:
         result = _llm_decide(context)
         if result is None:
             result = _llm_failure_fallback()
+    elif mode == AgentMode.ROUTED.value:
+        result = _routed_decide(context)
     else:
         result = _heuristic_decide(context)
 
