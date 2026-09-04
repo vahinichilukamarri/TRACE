@@ -1,11 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Inbox } from "lucide-react";
+import { Inbox, PlusCircle } from "lucide-react";
+import { Button } from "@/components/Button";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader } from "@/components/Page";
 import { CaseCard } from "@/components/CaseCard";
 import { RunSelector } from "@/components/RunSelector";
+import { SimulateFailureDialog } from "@/components/SimulateFailureDialog";
 import { EmptyState, ErrorState, LoadingState } from "@/components/States";
 import { CASE_STATUS_LABELS } from "@/lib/domain";
 
@@ -23,6 +25,7 @@ export default function RecoveryCases() {
   const [selectedScope, setSelectedScope] = useState(
     () => searchParams.get("eval_run_id") || "live"
   );
+  const [simulateOpen, setSimulateOpen] = useState(false);
 
   const fetcher = useCallback(
     () =>
@@ -81,7 +84,13 @@ export default function RecoveryCases() {
         title="Recovery intelligence queue"
         description="Every failed payment TRACE is tracking, why it matters, and what happens next."
         action={
-          <RunSelector value={selectedScope} onChange={setScope} includeLiveOption={true} />
+          <div className="flex items-center gap-2">
+            <RunSelector value={selectedScope} onChange={setScope} includeLiveOption={true} />
+            <Button onClick={() => setSimulateOpen(true)}>
+              <PlusCircle className="w-3.5 h-3.5" strokeWidth={1.5} />
+              Simulate failed payment
+            </Button>
+          </div>
         }
       />
 
@@ -141,6 +150,8 @@ export default function RecoveryCases() {
           </>
         )}
       </div>
+
+      {simulateOpen && <SimulateFailureDialog onClose={() => setSimulateOpen(false)} />}
     </div>
   );
 }

@@ -8,6 +8,27 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * FastAPI returns 422 `detail` as an ARRAY of validation objects, so passing it
+ * straight to Error() rendered as "[object Object]" -- technically not a silent
+ * failure, but useless to whoever is looking at it. Flatten it to something a
+ * human can act on.
+ */
+function formatApiError(body, status) {
+  const detail = body?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((d) => {
+      const field = Array.isArray(d?.loc) ? d.loc.filter((x) => x !== "body").join(".") : null;
+      const msg = d?.msg || JSON.stringify(d);
+      return field ? `${field}: ${msg}` : msg;
+    });
+    return parts.join("; ") || `Request failed (${status})`;
+  }
+  if (typeof body?.message === "string") return body.message;
+  return `Request failed (${status})`;
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -20,11 +41,7 @@ async function request(path, options = {}) {
     } catch (_) {
       /* no json body */
     }
-    throw new ApiError(
-      (body && (body.detail || body.message)) || `Request failed (${res.status})`,
-      res.status,
-      body
-    );
+    throw new ApiError(formatApiError(body, res.status), res.status, body);
   }
   if (res.status === 204) return null;
   return res.json();

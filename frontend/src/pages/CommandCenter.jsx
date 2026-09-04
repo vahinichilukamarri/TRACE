@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Zap, ShieldAlert } from "lucide-react";
+import { Zap, ShieldAlert, PlusCircle } from "lucide-react";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader, Section } from "@/components/Page";
@@ -9,6 +9,7 @@ import { RecoveryFlow } from "@/components/RecoveryFlow";
 import { CaseCard } from "@/components/CaseCard";
 import { Button } from "@/components/Button";
 import { RunSelector } from "@/components/RunSelector";
+import { SimulateFailureDialog } from "@/components/SimulateFailureDialog";
 import { EmptyState, ErrorState, LoadingState } from "@/components/States";
 import { formatCompactCurrency, formatPercent } from "@/lib/format";
 
@@ -17,6 +18,7 @@ export default function CommandCenter() {
   const [runError, setRunError] = useState(null);
   const [lastRun, setLastRun] = useState(null);
   const [selectedRun, setSelectedRun] = useState(null);
+  const [simulateOpen, setSimulateOpen] = useState(false);
 
   // Default the view to the most recent run once the runs list loads.
   const runsFetcher = useCallback(() => api.listEvaluationRuns(1), []);
@@ -88,6 +90,10 @@ export default function CommandCenter() {
         action={
           <div className="flex items-center gap-2">
             <RunSelector value={selectedRun} onChange={setSelectedRun} />
+            <Button onClick={() => setSimulateOpen(true)}>
+              <PlusCircle className="w-3.5 h-3.5" strokeWidth={1.5} />
+              Simulate failed payment
+            </Button>
             <Button variant="secondary" onClick={handleRunEvaluation} disabled={running}>
               <Zap className="w-3.5 h-3.5" strokeWidth={1.5} />
               {running ? "Running evaluation…" : "Run new evaluation"}
@@ -231,6 +237,8 @@ export default function CommandCenter() {
           </>
         )}
       </div>
+
+      {simulateOpen && <SimulateFailureDialog onClose={() => setSimulateOpen(false)} />}
     </div>
   );
 }
