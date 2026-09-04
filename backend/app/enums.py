@@ -36,6 +36,12 @@ class ActionType(str, Enum):
 class DecisionType(str, Enum):
     RECOVERY_WORTH_PURSUING = "RECOVERY_WORTH_PURSUING"
     NOT_WORTH_PURSUING = "NOT_WORTH_PURSUING"
+    # The reasoning call failed, so NO judgement was formed about whether
+    # recovery was worth pursuing. This is deliberately distinct from
+    # NOT_WORTH_PURSUING: reporting a network timeout on a Rs 95,000 case as
+    # "not worth pursuing" would be the system claiming a conclusion it never
+    # reached. Only TRACE itself may set this -- never the LLM.
+    EVALUATION_UNAVAILABLE = "EVALUATION_UNAVAILABLE"
 
 
 class PolicyResult(str, Enum):

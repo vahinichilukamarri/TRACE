@@ -9,7 +9,7 @@ explain any case after the fact (spec section 18).
 """
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, String, Float, Integer, DateTime, Text, ForeignKey, Boolean, JSON
@@ -21,6 +21,17 @@ from app.database import Base
 
 def gen_uuid() -> str:
     return str(uuid.uuid4())
+
+
+def utcnow() -> datetime:
+    """Timezone-aware UTC timestamp.
+
+    datetime.utcnow() returns a NAIVE datetime, so the API serialized it with no
+    offset ("2026-09-04T12:00:00"). The browser's new Date() then read that as
+    LOCAL time, putting every timestamp 5h30m in the past in IST -- a case
+    created seconds ago rendered as hours old.
+    """
+    return datetime.now(timezone.utc)
 
 
 class RecoveryCase(Base):
@@ -59,8 +70,8 @@ class RecoveryCase(Base):
     revenue_recovered = Column(Float, nullable=True)
     revenue_recovered_simulated = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     audit_logs = relationship("AuditLogEntry", back_populates="case", cascade="all, delete-orphan")
     decisions = relationship("AgentDecisionRecord", back_populates="case", cascade="all, delete-orphan")
@@ -96,7 +107,7 @@ class AuditLogEntry(Base):
     event_type = Column(String, nullable=False)
     payload = Column(JSON, nullable=True)
     notes = Column(Text, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    timestamp = Column(DateTime, default=utcnow, index=True)
 
     case = relationship("RecoveryCase", back_populates="audit_logs")
 
@@ -117,7 +128,7 @@ class AgentDecisionRecord(Base):
     intervention_cost = Column(Float, nullable=True)       # rough operating cost of the chosen action (INR)
     net_expected_value = Column(Float, nullable=True)      # expected_value - intervention_cost (INR)
     route_reason = Column(String, nullable=True)           # ROUTED mode: why this engine was chosen
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     case = relationship("RecoveryCase", back_populates="decisions")
 
@@ -132,7 +143,7 @@ class PolicyCheckRecord(Base):
     result = Column(String, nullable=False)  # PolicyResult
     reasons = Column(JSON, nullable=True)
     final_action = Column(String, nullable=True)  # action actually cleared for execution (may differ if forced)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     case = relationship("RecoveryCase", back_populates="policy_checks")
 
@@ -146,7 +157,7 @@ class ExecutionRecord(Base):
     execution_type = Column(String, nullable=False)  # REAL | SIMULATED
     status = Column(String, nullable=False)
     details = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     case = relationship("RecoveryCase", back_populates="executions")
     outcomes = relationship("OutcomeRecord", back_populates="execution")
@@ -161,7 +172,7 @@ class OutcomeRecord(Base):
     outcome = Column(String, nullable=False)  # OutcomeType
     simulated = Column(Boolean, default=True)
     revenue_recovered = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     case = relationship("RecoveryCase", back_populates="outcomes")
     execution = relationship("ExecutionRecord", back_populates="outcomes")
@@ -174,7 +185,7 @@ class ProcessedEvent(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     payment_id = Column(String, unique=True, index=True, nullable=False)
     case_id = Column(Integer, ForeignKey("recovery_cases.id"), nullable=False)
-    first_seen_at = Column(DateTime, default=datetime.utcnow)
+    first_seen_at = Column(DateTime, default=utcnow)
     duplicate_count = Column(Integer, default=0)
 
 
@@ -186,7 +197,7 @@ class EvaluationRun(Base):
     dataset_size = Column(Integer, nullable=False)
     seed = Column(Integer, nullable=True)
     config = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     results = relationship("EvaluationResult", back_populates="run", cascade="all, delete-orphan")
 
@@ -198,6 +209,6 @@ class EvaluationResult(Base):
     run_id = Column(Integer, ForeignKey("evaluation_runs.id"), nullable=False)
     system = Column(String, nullable=False)  # TRACE | BASELINE
     metrics = Column(JSON, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     run = relationship("EvaluationRun", back_populates="results")

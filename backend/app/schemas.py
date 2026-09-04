@@ -1,6 +1,22 @@
-from datetime import datetime
-from typing import Optional, Any
-from pydantic import BaseModel, Field
+from datetime import datetime, timezone
+from typing import Annotated, Optional, Any
+from pydantic import AfterValidator, BaseModel, Field
+
+
+def _assume_utc(value: datetime) -> datetime:
+    """Attach UTC to a naive datetime.
+
+    SQLite has no timezone storage: it drops the offset on write and hands back
+    a naive datetime even from a DateTime(timezone=True) column. Every timestamp
+    TRACE stores is UTC, so declaring that here is what actually puts a "+00:00"
+    in the JSON -- and it repairs rows written before the models were fixed
+    rather than leaving them 5h30m off.
+    """
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+# Use in place of `datetime` on every response field.
+UtcDatetime = Annotated[datetime, AfterValidator(_assume_utc)]
 
 
 class PaymentEventIn(BaseModel):
@@ -46,7 +62,7 @@ class AgentDecisionOut(BaseModel):
     intervention_cost: Optional[float] = None
     net_expected_value: Optional[float] = None
     route_reason: Optional[str] = None
-    created_at: datetime
+    created_at: UtcDatetime
 
     class Config:
         from_attributes = True
@@ -57,7 +73,7 @@ class PolicyCheckOut(BaseModel):
     result: str
     reasons: Any
     final_action: Optional[str]
-    created_at: datetime
+    created_at: UtcDatetime
 
     class Config:
         from_attributes = True
@@ -68,7 +84,7 @@ class ExecutionOut(BaseModel):
     execution_type: str
     status: str
     details: Any
-    created_at: datetime
+    created_at: UtcDatetime
 
     class Config:
         from_attributes = True
@@ -78,7 +94,7 @@ class OutcomeOut(BaseModel):
     outcome: str
     simulated: bool
     revenue_recovered: Optional[float]
-    created_at: datetime
+    created_at: UtcDatetime
 
     class Config:
         from_attributes = True
@@ -88,7 +104,7 @@ class AuditLogOut(BaseModel):
     event_type: str
     payload: Any
     notes: Optional[str]
-    timestamp: datetime
+    timestamp: UtcDatetime
 
     class Config:
         from_attributes = True
@@ -115,8 +131,8 @@ class CaseOut(BaseModel):
     system: str
     revenue_recovered: Optional[float]
     revenue_recovered_simulated: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
     class Config:
         from_attributes = True
@@ -155,9 +171,26 @@ class EvaluationRunRequest(BaseModel):
     demo_email_count: int = 1
 
 
+class EvaluationRunSummaryOut(BaseModel):
+    """Row shape for GET /evaluation/runs.
+
+    This endpoint used to return a hand-built dict, which meant FastAPI
+    serialized the raw ORM datetime with no UTC offset and the run dropdown
+    rendered every timestamp 5h30m off. Going through a model keeps it on the
+    same UtcDatetime guarantee as every other response.
+    """
+    run_id: str
+    dataset_size: int
+    seed: Optional[int]
+    created_at: UtcDatetime
+
+    class Config:
+        from_attributes = True
+
+
 class EvaluationRunOut(BaseModel):
     run_id: str
     dataset_size: int
     seed: Optional[int]
-    created_at: datetime
+    created_at: UtcDatetime
     results: dict  # {"TRACE": {...metrics}, "BASELINE": {...metrics}}

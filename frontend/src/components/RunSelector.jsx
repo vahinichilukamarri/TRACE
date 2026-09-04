@@ -9,10 +9,15 @@ import { formatDateTime } from "@/lib/format";
  * by the parent. Pass includeLiveOption to add a "Live cases only" entry
  * (value "live") for pages that also show individually-ingested demo
  * cases outside any batch run.
+ *
+ * The run list is fetched in here, so a parent that creates a new run has no
+ * other way to tell this component the list is stale -- bump `refreshToken`
+ * and it refetches. Without it the dropdown only picked up a new batch when
+ * the page remounted on navigation.
  */
-export function RunSelector({ value, onChange, includeLiveOption = false }) {
+export function RunSelector({ value, onChange, includeLiveOption = false, refreshToken = 0 }) {
   const fetcher = useCallback(() => api.listEvaluationRuns(20), []);
-  const { data: runs, loading } = useApi(fetcher, []);
+  const { data: runs, loading } = useApi(fetcher, [refreshToken]);
 
   if (loading) {
     return <div className="text-xs font-mono text-ink-faint">Loading runs…</div>;

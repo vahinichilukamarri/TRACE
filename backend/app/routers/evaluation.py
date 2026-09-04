@@ -43,10 +43,6 @@ def fetch_run(run_id: str, db: Session = Depends(get_db)):
     return schemas.EvaluationRunOut(**result)
 
 
-@router.get("/runs")
+@router.get("/runs", response_model=list[schemas.EvaluationRunSummaryOut])
 def list_runs(limit: int = 20, db: Session = Depends(get_db)):
-    runs = db.query(EvaluationRun).order_by(EvaluationRun.created_at.desc()).limit(limit).all()
-    return [
-        {"run_id": r.run_id, "dataset_size": r.dataset_size, "seed": r.seed, "created_at": r.created_at}
-        for r in runs
-    ]
+    return db.query(EvaluationRun).order_by(EvaluationRun.created_at.desc()).limit(limit).all()

@@ -19,6 +19,8 @@ export default function CommandCenter() {
   const [lastRun, setLastRun] = useState(null);
   const [selectedRun, setSelectedRun] = useState(null);
   const [simulateOpen, setSimulateOpen] = useState(false);
+  // Bumped after a run completes so RunSelector refetches its list.
+  const [runsToken, setRunsToken] = useState(0);
 
   // Default the view to the most recent run once the runs list loads.
   const runsFetcher = useCallback(() => api.listEvaluationRuns(1), []);
@@ -68,15 +70,20 @@ export default function CommandCenter() {
       // makes a completed run look like nothing happened.)
       const result = await api.runEvaluation({ dataset_size: 300 });
       setLastRun(result);
-      // Point the view at the run just produced, and refresh the dropdown so
-      // the new run appears in it.
+      // Point the view at the run just produced. Changing selectedRun is what
+      // drives the overview + attention refetch, because both fetchers key on
+      // it -- so do NOT also call refreshAll() here: that closure is still
+      // bound to the PREVIOUS run id and would race the deps-driven fetch,
+      // sometimes overwriting the new metrics with the old run's numbers.
+      setRunsToken((t) => t + 1);
       if (result?.run_id) setSelectedRun(result.run_id);
       await refreshRuns();
     } catch (e) {
       setRunError(e.message || "Evaluation run failed.");
+      // Nothing changed, so nothing refetches on its own -- refresh explicitly.
+      await refreshAll();
     } finally {
       clearInterval(pollRef.current);
-      await refreshAll();
       setRunning(false);
     }
   };
@@ -89,7 +96,11 @@ export default function CommandCenter() {
         description="How much revenue is at risk, what TRACE has recovered, and which cases need a human."
         action={
           <div className="flex items-center gap-2">
-            <RunSelector value={selectedRun} onChange={setSelectedRun} />
+            <RunSelector
+              value={selectedRun}
+              onChange={setSelectedRun}
+              refreshToken={runsToken}
+            />
             <Button onClick={() => setSimulateOpen(true)}>
               <PlusCircle className="w-3.5 h-3.5" strokeWidth={1.5} />
               Simulate failed payment

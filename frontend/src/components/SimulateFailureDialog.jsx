@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, Zap, RotateCw, AlertTriangle, Mail } from "lucide-react";
 import { api } from "@/api/client";
+import { useApi } from "@/hooks/useApi";
 import { Button } from "./Button";
 import { FAILURE_LABELS } from "@/lib/domain";
 
@@ -14,10 +15,34 @@ const FAILURE_CODES = [
 ];
 const FREE_TEXT = "__FREE_TEXT__";
 
-/** Ingest is idempotent by payment_id, so a reused id returns duplicate:true and
- *  renders no decision at all. Always hand the demo a fresh one. */
-function newPaymentId() {
-  return `LIVE_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`.toUpperCase();
+// Short, readable token per failure type -- a base36 blob is unreadable on camera.
+const ID_TOKEN = {
+  CARD_DECLINED: "CARD",
+  AUTH_FAILURE: "AUTH",
+  BANK_TIMEOUT: "BANK",
+  INSUFFICIENT_FUNDS: "FUNDS",
+  PROCESSING_ERROR: "PROC",
+  [FREE_TEXT]: "TEXT",
+};
+
+// Ids handed out this session. Ingest is idempotent by payment_id, so a repeat
+// would come back as duplicate:true with no decision -- which must not happen
+// mid-recording. 4 digits is only 10k wide, so remember what we've issued and
+// re-roll on a clash instead of trusting the odds.
+const issuedIds = new Set();
+
+/** e.g. PAY-CARD-4821 -- readable aloud, still collision-safe in a session. */
+function newPaymentId(failureMode) {
+  const token = ID_TOKEN[failureMode] || "PAY";
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const id = `PAY-${token}-${Math.floor(1000 + Math.random() * 9000)}`;
+    if (!issuedIds.has(id)) {
+      issuedIds.add(id);
+      return id;
+    }
+  }
+  // Pathological only: 50 clashes in a row. Fall back to something unique.
+  return `PAY-${token}-${Date.now().toString().slice(-6)}`;
 }
 
 const BASE = {
@@ -88,12 +113,23 @@ const FIELD =
 
 export function SimulateFailureDialog({ onClose }) {
   const navigate = useNavigate();
-  const [form, setForm] = useState(() => ({ ...BASE, paymentId: newPaymentId() }));
+  const [form, setForm] = useState(() => ({
+    ...BASE,
+    paymentId: newPaymentId(BASE.failureMode),
+  }));
+  // Once the operator types their own id, stop regenerating it underneath them.
+  const [idEdited, setIdEdited] = useState(false);
   const [activePreset, setActivePreset] = useState("standard");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [duplicateOf, setDuplicateOf] = useState(null);
   const panelRef = useRef(null);
+
+  // Whether the SERVER can actually send mail. Without this the dialog promised
+  // a real email and then silently sent nothing.
+  const policyFetcher = useCallback(() => api.getPolicyConfig(), []);
+  const { data: policyConfig } = useApi(policyFetcher, []);
+  const smtpConfigured = policyConfig?.email_delivery?.smtp_configured === true;
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
@@ -101,8 +137,10 @@ export function SimulateFailureDialog({ onClose }) {
     setActivePreset(preset.key);
     setError(null);
     setDuplicateOf(null);
-    // Fresh id every time: re-running a preset mid-demo must never collide.
-    setForm({ ...preset.values, paymentId: newPaymentId() });
+    // Fresh id every time: re-running a preset mid-demo must never collide,
+    // and the token has to match the preset's failure type.
+    setIdEdited(false);
+    setForm({ ...preset.values, paymentId: newPaymentId(preset.values.failureMode) });
   };
 
   useEffect(() => {
@@ -121,7 +159,7 @@ export function SimulateFailureDialog({ onClose }) {
 
       // Never submit a blank id. Generate rather than block, so the demo can
       // never stall on a validation message.
-      const paymentId = form.paymentId.trim() || newPaymentId();
+      const paymentId = form.paymentId.trim() || newPaymentId(form.failureMode);
       if (paymentId !== form.paymentId) setForm((f) => ({ ...f, paymentId }));
 
       const isFreeText = form.failureMode === FREE_TEXT;
@@ -245,15 +283,24 @@ export function SimulateFailureDialog({ onClose }) {
                 id="sim-payment-id"
                 className={FIELD}
                 value={form.paymentId}
-                onChange={(e) => set({ paymentId: e.target.value })}
+                onChange={(e) => {
+                  setIdEdited(true);
+                  set({ paymentId: e.target.value });
+                }}
                 onBlur={() => {
-                  if (!form.paymentId.trim()) set({ paymentId: newPaymentId() });
+                  if (!form.paymentId.trim()) {
+                    setIdEdited(false);
+                    set({ paymentId: newPaymentId(form.failureMode) });
+                  }
                 }}
               />
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => set({ paymentId: newPaymentId() })}
+                onClick={() => {
+                  setIdEdited(false);
+                  set({ paymentId: newPaymentId(form.failureMode) });
+                }}
                 title="Generate a new ID"
               >
                 <RotateCw className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -288,7 +335,14 @@ export function SimulateFailureDialog({ onClose }) {
                 id="sim-failure"
                 className={FIELD}
                 value={form.failureMode}
-                onChange={(e) => set({ failureMode: e.target.value })}
+                onChange={(e) => {
+                  const failureMode = e.target.value;
+                  set(
+                    idEdited
+                      ? { failureMode }
+                      : { failureMode, paymentId: newPaymentId(failureMode) }
+                  );
+                }}
               >
                 {FAILURE_CODES.map((code) => (
                   <option key={code} value={code}>
@@ -397,11 +451,19 @@ export function SimulateFailureDialog({ onClose }) {
               value={form.customerEmail}
               onChange={(e) => set({ customerEmail: e.target.value })}
             />
-            <p className="mt-1 flex items-start gap-1.5 text-[10px] text-signal-amber">
-              <Mail className="mt-px h-3 w-3 shrink-0" strokeWidth={1.5} />
-              Setting this sends a real recovery email to that address. Leave it blank and TRACE
-              still renders the email but records delivery as SIMULATED.
-            </p>
+            {smtpConfigured ? (
+              <p className="mt-1 flex items-start gap-1.5 text-[10px] text-signal-amber">
+                <Mail className="mt-px h-3 w-3 shrink-0" strokeWidth={1.5} />
+                Setting this sends a real recovery email to that address. Leave it blank and
+                TRACE still renders the email but records delivery as SIMULATED.
+              </p>
+            ) : (
+              <p className="mt-1 flex items-start gap-1.5 text-[10px] text-ink-faint">
+                <Mail className="mt-px h-3 w-3 shrink-0" strokeWidth={1.5} />
+                SMTP is not configured on this server, so no email will actually be sent.
+                TRACE will still render the full email and record delivery as SIMULATED.
+              </p>
+            )}
           </div>
 
           {duplicateOf && (
@@ -435,7 +497,8 @@ export function SimulateFailureDialog({ onClose }) {
                       variant="secondary"
                       onClick={() => {
                         setDuplicateOf(null);
-                        set({ paymentId: newPaymentId() });
+                        setIdEdited(false);
+                        set({ paymentId: newPaymentId(form.failureMode) });
                       }}
                     >
                       Use a new ID

@@ -41,6 +41,20 @@ def get_policy_config():
                 "attempt. Every decision records which engine ran and why, in route_reason."
             ),
         },
+        "email_delivery": {
+            # Boolean only -- host, user, password and the API key are never
+            # returned. This exists so the UI can stop promising a real send
+            # when the server has no SMTP configured to make one.
+            "smtp_configured": bool(
+                settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD
+            ),
+            "note": (
+                "A real email is sent only when SMTP is configured AND the case carries "
+                "an explicitly-set customer_email. Otherwise TRACE still renders the full "
+                "email and records delivery as SIMULATED. Batch evaluation cases never "
+                "carry an address, so a run never sends mail."
+            ),
+        },
         "allowed_actions": [a.value for a in ActionType],
         "recovery_window_overrides": {
             "by_failure_type": RECOVERY_WINDOW_BY_FAILURE_TYPE,

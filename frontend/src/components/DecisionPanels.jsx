@@ -1,4 +1,10 @@
-import { ACTION_LABELS, DECISION_SIGNAL, POLICY_SIGNAL, SIGNAL_CLASSES } from "@/lib/domain";
+import {
+  ACTION_LABELS,
+  DECISION_LABELS,
+  DECISION_SIGNAL,
+  POLICY_SIGNAL,
+  SIGNAL_CLASSES,
+} from "@/lib/domain";
 import { formatDateTime, formatPercent } from "@/lib/format";
 import { StatusPill } from "./StatusIndicator";
 import { ShieldCheck, ShieldX, ShieldAlert, Brain } from "lucide-react";
@@ -25,7 +31,7 @@ export function DecisionPanel({ decision }) {
 
       <div className="flex items-center justify-between mb-3">
         <span className={`text-sm font-semibold ${cls.text}`}>
-          {decision.decision.replace(/_/g, " ")}
+          {DECISION_LABELS[decision.decision] || decision.decision.replace(/_/g, " ")}
         </span>
         <span className="mono-tabular text-sm text-bone">
           {formatPercent(decision.confidence)}
@@ -38,7 +44,28 @@ export function DecisionPanel({ decision }) {
         {ACTION_LABELS[decision.action] || decision.action}
       </div>
 
-      {decision.net_expected_value != null && (
+      {/* A fallback never evaluated the case, so the -Rs 150 escalation cost is
+          not a considered economic judgment. Say what it is instead of dressing
+          it up as one. */}
+      {decision.is_fallback && (
+        <div className="bg-obsidian border border-signal-amber/30 p-2 mb-3">
+          <div className="text-[10px] font-mono uppercase tracking-[0.08em] text-signal-amber mb-1">
+            Expected value not computed
+          </div>
+          <p className="text-xs text-ink-faint leading-relaxed">
+            The reasoning call failed, so this case was never evaluated. It was escalated to
+            a human rather than decided. The
+            {" "}
+            {decision.intervention_cost != null
+              ? `₹${Number(decision.intervention_cost).toLocaleString("en-IN")} `
+              : " "}
+            escalation cost is a handling cost, not a judgment about whether recovery was
+            worth pursuing.
+          </p>
+        </div>
+      )}
+
+      {!decision.is_fallback && decision.net_expected_value != null && (
         <div className="grid grid-cols-3 gap-2 mb-3">
           <div className="bg-obsidian border border-obsidian-line p-2">
             <div className="text-[10px] font-mono uppercase tracking-[0.08em] text-ink-faint mb-1">
@@ -140,9 +167,23 @@ export function PolicyCheckPanel({ policy }) {
 }
 
 /** What actually happened when the approved action ran. */
+const DELIVERY_STYLE = {
+  REAL: "border-signal-mint/40 bg-signal-mint-dim/10 text-signal-mint",
+  SIMULATED: "border-obsidian-line bg-obsidian text-ink-faint",
+  FAILED: "border-signal-red/40 bg-signal-red-dim/10 text-signal-red",
+};
+
+const DELIVERY_COPY = {
+  REAL: "Sent for real over SMTP and accepted by the mail server.",
+  SIMULATED: "Rendered in full but not delivered. Nothing reached a real inbox.",
+  FAILED: "The send was attempted and rejected. No email reached the customer.",
+};
+
 export function ExecutionPanel({ execution }) {
   if (!execution) return null;
   const isReal = execution.execution_type === "REAL";
+  const details = typeof execution.details === "object" ? execution.details : null;
+  const delivery = details?.delivery || null;
   return (
     <div className="border border-obsidian-line bg-obsidian-soft p-4">
       <div className="flex items-center justify-between mb-3">
@@ -159,6 +200,32 @@ export function ExecutionPanel({ execution }) {
         {ACTION_LABELS[execution.action] || execution.action}
       </div>
       <div className="text-xs font-mono text-ink-faint mb-2">status: {execution.status}</div>
+
+      {/* Email actions carry the actual delivery result. A FAILED send must
+          never read as a success just because the action executed. */}
+      {delivery && (
+        <div className={`border p-2 mb-2 ${DELIVERY_STYLE[delivery] || DELIVERY_STYLE.SIMULATED}`}>
+          <div className="text-[10px] font-mono uppercase tracking-[0.08em] mb-1">
+            Email delivery · {delivery}
+          </div>
+          <p className="text-xs text-ink-faint leading-relaxed">
+            {DELIVERY_COPY[delivery] || `Delivery reported as ${delivery}.`}
+          </p>
+          {details?.to && (
+            <div className="text-[10px] font-mono text-ink-faint mt-1">to: {details.to}</div>
+          )}
+          {delivery === "FAILED" && details?.error && (
+            <div className="text-[10px] font-mono text-signal-red mt-1 break-words">
+              {details.error}
+            </div>
+          )}
+          {delivery === "SIMULATED" && details?.simulated_reason && (
+            <div className="text-[10px] font-mono text-ink-faint mt-1">
+              {details.simulated_reason}
+            </div>
+          )}
+        </div>
+      )}
       {execution.details && (
         <pre className="text-[11px] font-mono text-ink-soft bg-obsidian rounded-xs p-2 overflow-x-auto">
           {typeof execution.details === "string"

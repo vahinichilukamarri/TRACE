@@ -38,6 +38,22 @@ export const ACTION_LABELS = {
 export const DecisionType = {
   RECOVERY_WORTH_PURSUING: "RECOVERY_WORTH_PURSUING",
   NOT_WORTH_PURSUING: "NOT_WORTH_PURSUING",
+  // The reasoning call failed, so no judgement was formed. Distinct from a
+  // decline -- never bucket it as one.
+  EVALUATION_UNAVAILABLE: "EVALUATION_UNAVAILABLE",
+};
+
+export const DECISION_LABELS = {
+  RECOVERY_WORTH_PURSUING: "Recovery worth pursuing",
+  NOT_WORTH_PURSUING: "Not worth pursuing",
+  EVALUATION_UNAVAILABLE: "Reasoning unavailable",
+};
+
+// Short form for the case summary "recovery worthiness" line.
+export const DECISION_WORTHINESS = {
+  RECOVERY_WORTH_PURSUING: "Worth pursuing",
+  NOT_WORTH_PURSUING: "Not worth pursuing",
+  EVALUATION_UNAVAILABLE: "Not evaluated",
 };
 
 export const PolicyResult = {
@@ -115,6 +131,8 @@ export const OUTCOME_SIGNAL = {
 export const DECISION_SIGNAL = {
   RECOVERY_WORTH_PURSUING: "orange",
   NOT_WORTH_PURSUING: "neutral",
+  // Amber = needs a human, consistent with how review states read elsewhere.
+  EVALUATION_UNAVAILABLE: "amber",
 };
 
 // Tailwind class groups per signal name -- keeps color usage centralized & semantic only.

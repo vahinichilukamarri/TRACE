@@ -80,4 +80,58 @@ def test_llm_mode_without_api_key_falls_back_safely(monkeypatch):
     result = decide(base_context(), mode="LLM")
     assert result.is_fallback is True
     assert result.action == ActionType.ESCALATE_FOR_REVIEW
-    assert result.decision == DecisionType.NOT_WORTH_PURSUING
+    # The reasoning call never ran, so no judgement was formed. Reporting this
+    # as NOT_WORTH_PURSUING would claim a conclusion the system never reached.
+    assert result.decision == DecisionType.EVALUATION_UNAVAILABLE
+    assert result.decision != DecisionType.NOT_WORTH_PURSUING
+
+
+def test_fallback_never_labels_a_high_value_case_as_declined(monkeypatch):
+    """The exact case the old behaviour got wrong: a Rs 95,000 transaction
+    marked 'not worth pursuing' because of a network failure."""
+    import app.agent as agent_mod
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "fake-key-present")
+    monkeypatch.setattr(agent_mod, "_llm_decide", lambda ctx: None)
+
+    result = decide(base_context(amount=95000), mode="LLM")
+    assert result.is_fallback is True
+    assert result.decision == DecisionType.EVALUATION_UNAVAILABLE
+    assert result.action == ActionType.ESCALATE_FOR_REVIEW
+
+
+def test_llm_may_not_self_report_evaluation_unavailable(monkeypatch):
+    """EVALUATION_UNAVAILABLE is reserved for a FAILED reasoning call. A model
+    that successfully answered cannot also claim it was unable to evaluate."""
+    import app.agent as agent_mod
+    from app.config import settings
+
+    class _Msg:
+        content = (
+            '{"decision": "EVALUATION_UNAVAILABLE", "action": "RETRY_PAYMENT", '
+            '"confidence": 0.9, "reasoning": "x"}'
+        )
+
+    class _Choice:
+        message = _Msg()
+        finish_reason = "stop"
+
+    class _Resp:
+        choices = [_Choice()]
+
+    class _Client:
+        def __init__(self, **kw):
+            self.chat = self
+            self.completions = self
+
+        def create(self, **kw):
+            return _Resp()
+
+    import sys as _sys, types as _types
+    fake = _types.ModuleType("groq")
+    fake.Groq = _Client
+    monkeypatch.setitem(_sys.modules, "groq", fake)
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "fake-key-present")
+
+    assert agent_mod._llm_decide(base_context()) is None

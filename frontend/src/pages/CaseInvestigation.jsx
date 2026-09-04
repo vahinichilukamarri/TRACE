@@ -12,7 +12,12 @@ import { StatusPill } from "@/components/StatusIndicator";
 import { ErrorState, LoadingState } from "@/components/States";
 import { deriveTraceStage } from "@/lib/caseStage";
 import { groupCaseIterations } from "@/lib/caseGrouping";
-import { CASE_STATUS_LABELS, FAILURE_LABELS, STATUS_SIGNAL } from "@/lib/domain";
+import {
+  CASE_STATUS_LABELS,
+  DECISION_WORTHINESS,
+  FAILURE_LABELS,
+  STATUS_SIGNAL,
+} from "@/lib/domain";
 import { formatCurrency, formatDateTime, formatPercent } from "@/lib/format";
 
 // Actions that send the customer a clickable link -- kept in sync with
@@ -151,9 +156,8 @@ export default function CaseInvestigation() {
                     </div>
                     <div className="text-sm text-bone font-medium">
                       {latestDecision
-                        ? latestDecision.decision === "RECOVERY_WORTH_PURSUING"
-                          ? "Worth pursuing"
-                          : "Not worth pursuing"
+                        ? DECISION_WORTHINESS[latestDecision.decision] ||
+                          latestDecision.decision.replace(/_/g, " ")
                         : "Not yet evaluated"}
                     </div>
                     {latestDecision && (

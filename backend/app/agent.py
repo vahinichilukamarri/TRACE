@@ -309,6 +309,16 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
             text = text[4:].strip()
         data = json.loads(text)
 
+        decision = data["decision"]
+        if decision == DecisionType.EVALUATION_UNAVAILABLE.value:
+            # Reserved for a failed reasoning call. A model that answered
+            # cannot also claim it was unable to evaluate.
+            logger.warning(
+                "LLM decision for %s returned reserved decision %r; rejected.",
+                payment_id, decision,
+            )
+            return None
+
         action = data["action"]
         if action not in ALLOWED_ACTIONS:
             # Agent invented an action -- treat as failure, never execute it.
@@ -319,7 +329,7 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
             return None
 
         return AgentDecisionResult(
-            decision=DecisionType(data["decision"]),
+            decision=DecisionType(decision),
             action=ActionType(action),
             confidence=float(data["confidence"]),
             reasoning=str(data["reasoning"]),
@@ -336,7 +346,8 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
 
 def _llm_failure_fallback() -> AgentDecisionResult:
     return AgentDecisionResult(
-        decision=DecisionType.NOT_WORTH_PURSUING,
+        # NOT a decline: the engine never got to evaluate this case.
+        decision=DecisionType.EVALUATION_UNAVAILABLE,
         action=ActionType.ESCALATE_FOR_REVIEW,
         confidence=0.0,
         reasoning="Agent reasoning call failed or returned an invalid response; flagged for human review rather than guessing.",
