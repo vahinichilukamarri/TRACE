@@ -23,9 +23,52 @@
   --color-signal-red: #EF4444;
   --color-signal-red-dim: #FBDCDC;
 
+  /* ---- Ledger (light system: settlement statement, not dashboard) ----
+     Six base values. Muted text is DERIVED via opacity (text-graphite/55),
+     never a seventh hex, so a state's text and its fill are provably the
+     same hue. */
+  --color-paper: #F4EEE1;      /* cream document stock -- the record surfaces */
+  --color-paper-alt: #EBE3D2;  /* second cream, for banding inside a document */
+  --color-graphite: #171009;   /* ink on cream */
+  --color-paper-hi: #FBF6EA;   /* a fresher sheet, for cards on a cream band */
+  --color-rule: #D6CBB4;       /* hairlines and table structure on cream */
+
+  /* The dark desk the documents sit on. Warm near-black, never pure #000 --
+     a cool black next to cream reads as a rendering error, not a choice. */
+  --color-void: #0E0B08;
+  --color-void-soft: #16110C;
+  --color-void-line: #2C2318;
+  --color-cream: #F0E7D6;      /* type on the dark ground */
+  --color-cream-dim: #B7A88F;
+
+  /* One saturated accent, for what the reader can act on. Deliberately NOT
+     amber: amber is the HOLD verdict and a colour may mean one thing here. */
+  --color-electric: #2F30FF;
+  --color-electric-deep: #1B1CC9;
+
+  /* Semantics, saturated enough to carry a full surface rather than a hairline.
+     Each has a soft tint (fills) and a deep shade (gradient ends, dark band). */
+  --color-approve: #0E7C55;
+  --color-approve-soft: #E4F3EB;
+  --color-approve-deep: #075038;
+  --color-block: #B3261E;
+  --color-block-soft: #FBEAE6;
+  --color-block-deep: #7C1711;
+  --color-hold: #A87708;
+  --color-hold-soft: #FBF0D8;
+  --color-hold-deep: #6F4E04;
+
+  /* The dark bands, aliased so the interactive panels track the desk palette. */
+  --color-console: #0E0B08;
+  --color-console-soft: #16110C;
+  --color-console-line: #2C2318;
+  --color-console-text: #F0E7D6;
+
   /* ---- Type ---- */
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+  --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-display: "Instrument Serif", "Source Serif 4", Georgia, serif;
 
   /* ---- Radius (kept small & technical, not rounded-SaaS) ---- */
   --radius-xs: 2px;
@@ -62,6 +105,23 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "cv11", "ss01";
+}
+
+/* The landing page owns the whole page ground. Scoped with :has() so the app
+   keeps its dark console surface and no JS has to mutate <body>. */
+body:has(.landing-page) {
+  background-color: var(--color-void);
+  color: var(--color-cream);
+}
+body:has(.landing-page) ::selection {
+  background: var(--color-electric);
+  color: #fff;
+}
+body:has(.landing-page) * {
+  scrollbar-color: var(--color-void-line) transparent;
+}
+body:has(.landing-page) *::-webkit-scrollbar-thumb {
+  background: var(--color-void-line);
 }
 
 ::selection {
@@ -105,3 +165,159 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+
+/* Figures only: money, counts, percentages, identifiers. Never prose. */
+.tnum {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Visible keyboard focus everywhere, including on the light ledger ground. */
+:focus-visible {
+  outline: 2px solid var(--color-graphite);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* ---- Landing motion -------------------------------------------------------
+   All keyframes finish in the state the element must hold, so disabling motion
+   leaves a complete, legible page rather than a blank one. */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes stampIn {
+  0%   { opacity: 0; transform: scale(2.1) rotate(-16deg); }
+  55%  { opacity: 1; transform: scale(0.94) rotate(-3.5deg); }
+  75%  { transform: scale(1.04) rotate(-2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-2.5deg); }
+}
+@keyframes sweep {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+@keyframes caret {
+  0%, 45% { opacity: 1; }
+  50%, 95% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.anim-rise { animation: riseIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-stamp { animation: stampIn 0.62s cubic-bezier(0.34, 1.4, 0.5, 1) both; }
+.anim-sweep { transform-origin: left center; animation: sweep 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-caret { animation: caret 1s steps(1) infinite; }
+
+/* Reduced motion: land on the end state immediately, never hide content. */
+@media (prefers-reduced-motion: reduce) {
+  .anim-rise,
+  .anim-stamp,
+  .anim-sweep,
+  .anim-caret {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .anim-stamp { transform: rotate(-2.5deg) !important; }
+}
+
+
+/* ---- Dark-desk surfaces -------------------------------------------------
+   Texture is what separates a dark page from an unstyled one. Three layers,
+   all cheap: a dot grid for weave, a radial lift so the ground is not flat,
+   and a hairline seam where bands meet. */
+
+.tex-dots {
+  background-image: radial-gradient(#3A2E20 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* A warm pool of light behind the content, so the eye has somewhere to land. */
+.tex-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(240, 231, 214, 0.10) 0%, rgba(240, 231, 214, 0) 55%),
+    radial-gradient(70% 55% at 80% 15%, rgba(47, 48, 255, 0.16) 0%, rgba(47, 48, 255, 0) 60%);
+}
+
+/* Vignette that lets a textured band fade out instead of stopping dead. */
+.tex-fade::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    var(--color-void) 0%,
+    rgba(14, 11, 8, 0) 18%,
+    rgba(14, 11, 8, 0) 82%,
+    var(--color-void) 100%
+  );
+}
+
+/* Display type: Instrument Serif is drawn for size. Tighten it and let the
+   optical size do the work -- it is limp below about 2rem. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  line-height: 0.98;
+}
+
+/* Headline that fades as it descends, the way both reference pages set theirs. */
+.display-fade {
+  background: linear-gradient(180deg, var(--color-cream) 0%, var(--color-cream) 55%, #A6987F 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Slash-prefixed, letterspaced micro-label -- the connective tissue on both
+   reference pages. Content, not decoration: it names the section. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Glass panel for the dark bands. */
+.glass {
+  background: linear-gradient(180deg, rgba(240, 231, 214, 0.07) 0%, rgba(240, 231, 214, 0.03) 100%);
+  border: 1px solid rgba(240, 231, 214, 0.14);
+}
+
+/* A cream document lifted off the desk. The shadow is warm, not grey, or the
+   card looks pasted on rather than resting there. */
+.doc {
+  background: var(--color-paper);
+  color: var(--color-graphite);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 2px 6px rgba(0, 0, 0, 0.45),
+    0 26px 60px -28px rgba(0, 0, 0, 0.9);
+}
+
+
+/* ---- Scroll settling ------------------------------------------------------
+   CSS scroll-snap is deliberately NOT used here. `scroll-snap-type` can only be
+   set on the scroll container, which is the whole document: with `mandatory`,
+   the three rail snap points trap the page and it cannot be scrolled past them
+   at all, and with `proximity` a card only settles when a gesture happens to end
+   near one. The rail settles itself in JS instead, scoped to its own track.
+   Nothing else on the page is affected. */

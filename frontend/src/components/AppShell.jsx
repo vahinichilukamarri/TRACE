@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutGrid,
   ListChecks,
@@ -10,7 +10,7 @@ import {
 import { useState } from "react";
 
 const NAV_ITEMS = [
-  { to: "/", label: "Command center", icon: LayoutGrid, end: true },
+  { to: "/dashboard", label: "Command center", icon: LayoutGrid },
   { to: "/cases", label: "Recovery cases", icon: ListChecks },
   { to: "/performance", label: "Performance", icon: BarChart3 },
   { to: "/policy", label: "Policy & control", icon: ShieldCheck },
@@ -25,10 +25,10 @@ export function AppShell({ children }) {
       {/* Sidebar */}
       <aside className="w-60 shrink-0 border-r border-obsidian-line flex flex-col">
         <div className="px-5 py-5 border-b border-obsidian-line">
-          <div className="flex items-center gap-2">
+          <Link to="/" className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-signal-orange animate-pulse-slow" />
             <span className="font-semibold tracking-tight text-lg">TRACE</span>
-          </div>
+          </Link>
           <div className="text-[10px] font-mono text-ink-faint mt-1 leading-snug">
             Transaction Recovery Agent
             <br />
