@@ -314,10 +314,39 @@ body:has(.landing-page) *::-webkit-scrollbar-thumb {
 }
 
 
-/* ---- Scroll settling ------------------------------------------------------
-   CSS scroll-snap is deliberately NOT used here. `scroll-snap-type` can only be
-   set on the scroll container, which is the whole document: with `mandatory`,
-   the three rail snap points trap the page and it cannot be scrolled past them
-   at all, and with `proximity` a card only settles when a gesture happens to end
-   near one. The rail settles itself in JS instead, scoped to its own track.
-   Nothing else on the page is affected. */
+/* ---- Card deck ------------------------------------------------------------
+   A card is thrown off to one side with a little rotation as the next slides in
+   from the other. Both keyframes end on a fully-formed state so nothing is left
+   mid-flight if an animation is cut short. */
+@keyframes cardOutLeft {
+  from { transform: none; opacity: 1; }
+  to   { transform: translateX(-118%) rotate(-7deg); opacity: 0; }
+}
+@keyframes cardOutRight {
+  from { transform: none; opacity: 1; }
+  to   { transform: translateX(118%) rotate(7deg); opacity: 0; }
+}
+@keyframes cardInRight {
+  from { transform: translateX(46%) rotate(4.5deg); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+@keyframes cardInLeft {
+  from { transform: translateX(-46%) rotate(-4.5deg); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
+
+.card-out-left  { animation: cardOutLeft  0.46s cubic-bezier(0.5, 0, 0.75, 0.2) both; }
+.card-out-right { animation: cardOutRight 0.46s cubic-bezier(0.5, 0, 0.75, 0.2) both; }
+.card-in-right  { animation: cardInRight  0.46s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.card-in-left   { animation: cardInLeft   0.46s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card-out-left,
+  .card-out-right,
+  .card-in-right,
+  .card-in-left {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

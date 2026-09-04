@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { HeroAdjudication } from "../components/landing/HeroAdjudication";
-import { HorizontalSequence } from "../components/landing/HorizontalSequence";
+import { CardDeck } from "../components/landing/CardDeck";
 import { RoutingExplainer } from "../components/landing/RoutingExplainer";
 import { RecoveryLoop } from "../components/landing/RecoveryLoop";
 import { ActionLedger } from "../components/landing/ActionLedger";
@@ -11,11 +11,10 @@ import { useInView } from "../components/landing/useInView";
 /*
  * The ledger, on a dark desk.
  *
- * Two movements. Chapters 01-03 advance SIDEWAYS through a pinned rail -- the
- * argument told as a sequence. Chapters 04-08 stack vertically and share one
- * shell: number in the gutter, slash eyebrow, display heading, lede, then a
- * single bordered content region. Same rhythm every time, so the lower half
- * reads as one system rather than a pile of separately-built blocks.
+ * The argument is a deck of seven cards the reader turns by hand. It is one
+ * ordinary section in the vertical flow: nothing pins, nothing is sticky, and
+ * no component reads or alters scroll position. The page scrolls top to bottom
+ * exactly as an unstyled document would.
  *
  * Colour discipline: approve / block / hold are the three policy verdicts and
  * nothing else may borrow them, which is why the accent is electric blue.
@@ -23,14 +22,7 @@ import { useInView } from "../components/landing/useInView";
 
 /* ---------------------------------------------------------------- primitives */
 
-const GROUND = {
-  void: { cls: "bg-void", dark: true },
-  voidSoft: { cls: "bg-void-soft", dark: true },
-  cream: { cls: "bg-paper", dark: false },
-  creamAlt: { cls: "bg-paper-alt", dark: false },
-};
-
-/** The one heading treatment. Every chapter and every rail panel uses it. */
+/** The one heading treatment, used by every card and every chapter. */
 function Head({ index, eyebrow, title, lede, dark, size = "lg" }) {
   return (
     <>
@@ -73,7 +65,7 @@ function Head({ index, eyebrow, title, lede, dark, size = "lg" }) {
 function Panel({ dark, className = "", children }) {
   return (
     <div
-      className={`rounded-sm p-6 sm:p-8 ${dark ? "glass" : "border border-rule bg-paper-hi"} ${className}`}
+      className={`rounded-sm p-6 ${dark ? "glass" : "border border-rule bg-paper-hi"} ${className}`}
     >
       {children}
     </div>
@@ -89,32 +81,6 @@ function Note({ dark, children }) {
     >
       {children}
     </p>
-  );
-}
-
-/** The vertical chapter shell. Identical rhythm for every section below the rail. */
-function Chapter({ index, eyebrow, title, lede, ground = "void", textured = false, children }) {
-  const [ref, seen] = useInView();
-  const g = GROUND[ground];
-  return (
-    <section
-      className={`relative overflow-hidden border-t ${g.cls} ${
-        g.dark ? "border-void-line/70 text-cream" : "border-rule text-graphite"
-      }`}
-    >
-      {textured && (
-        <>
-          <div aria-hidden="true" className="tex-dots pointer-events-none absolute inset-0 opacity-60" />
-          <div aria-hidden="true" className="tex-fade pointer-events-none absolute inset-0" />
-        </>
-      )}
-      <div className="relative mx-auto w-full max-w-5xl px-6 py-20 sm:px-10 sm:py-24">
-        <div ref={ref} className={seen ? "anim-rise" : "opacity-0"}>
-          <Head index={index} eyebrow={eyebrow} title={title} lede={lede} dark={g.dark} />
-          <div className="mt-12">{children}</div>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -150,8 +116,6 @@ const RULES = [
   ["All checks passed", "APPROVED"],
 ];
 
-/* The audit chain, as aligned rows -- the same figure treatment as every other
-   table on the page. */
 const TRAIL = [
   ["Classified", "failure type, confidence, and which classifier produced it"],
   ["Decided", "proposed action, confidence, reasoning, and which engine ran"],
@@ -161,151 +125,232 @@ const TRAIL = [
   ["Observed", "the outcome recorded against the case"],
 ];
 
-/* ------------------------------------------------------- horizontal chapters */
+/* ------------------------------------------------------------------- the deck */
 
-function RailPanel({ left, right }) {
-  return (
-    <div className="grid items-center gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)]">
-      <div>{left}</div>
-      <div>{right}</div>
-    </div>
-  );
-}
-
-const CHAPTERS = [
+const CARDS = [
   {
     id: "problem",
     title: "The problem",
-    groundClass: "bg-void-soft",
     dark: true,
-    textured: true,
     render: () => (
-      <RailPanel
-        left={
-          <>
-            <Head
-              index="01"
-              eyebrow="the problem"
-              title="Chasing everything is how you lose money."
-              dark
-              size="sm"
-              lede="A failed payment is not a lost customer. The card was declined, the bank timed out, the authentication did not complete — in most cases the person still wants to buy. The revenue is recoverable."
-            />
-            <Note dark>
-              But chasing costs money. Every retry carries a gateway fee, every recovery email
-              costs a send, every escalation costs a person&apos;s time. Most systems chase
-              everything identically — which spends the same effort on both of these.
-            </Note>
-          </>
-        }
-        right={
-          <div className="grid gap-4 sm:grid-cols-2">
-            {[
-              {
-                amount: "₹200",
-                history: "four prior failures",
-                verdict: "Not worth pursuing",
-                tone: "text-block",
-              },
-              {
-                amount: "₹95,000",
-                history: "never failed before",
-                verdict: "Worth every rupee spent",
-                tone: "text-approve",
-              },
-            ].map((c) => (
-              <Panel dark key={c.amount}>
-                <div className="tnum display text-4xl text-cream">{c.amount}</div>
-                <div className="mt-2 text-sm text-cream-dim">{c.history}</div>
-                <div className="mt-6 border-t border-cream/15 pt-4">
-                  <div className="eyebrow text-cream-dim/50">/ correct call</div>
-                  <div className={`mt-1.5 text-sm font-semibold ${c.tone}`}>{c.verdict}</div>
-                </div>
-              </Panel>
-            ))}
-            <p className="text-sm leading-relaxed text-cream-dim/75 sm:col-span-2">
-              A fixed-rule system spends identically on both. Indiscriminate chasing does not just
-              waste effort — it destroys the value it is trying to recover.
-            </p>
-          </div>
-        }
-      />
+      <div className="grid items-center gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)]">
+        <div>
+          <Head
+            index="01"
+            eyebrow="the problem"
+            title="Chasing everything is how you lose money."
+            dark
+            size="sm"
+            lede="A failed payment is not a lost customer. The card was declined, the bank timed out, the authentication did not complete — in most cases the person still wants to buy. The revenue is recoverable."
+          />
+          <Note dark>
+            But chasing costs money. Every retry carries a gateway fee, every recovery email costs
+            a send, every escalation costs a person&apos;s time. Most systems chase everything
+            identically — which spends the same effort on both of these.
+          </Note>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {[
+            { amount: "₹200", history: "four prior failures", verdict: "Not worth pursuing", tone: "text-block" },
+            { amount: "₹95,000", history: "never failed before", verdict: "Worth every rupee spent", tone: "text-approve" },
+          ].map((c) => (
+            <Panel dark key={c.amount}>
+              <div className="tnum display text-4xl text-cream">{c.amount}</div>
+              <div className="mt-2 text-sm text-cream-dim">{c.history}</div>
+              <div className="mt-6 border-t border-cream/15 pt-4">
+                <div className="eyebrow text-cream-dim/50">/ correct call</div>
+                <div className={`mt-1.5 text-sm font-semibold ${c.tone}`}>{c.verdict}</div>
+              </div>
+            </Panel>
+          ))}
+          <p className="text-sm leading-relaxed text-cream-dim/75 sm:col-span-2">
+            A fixed-rule system spends identically on both. Indiscriminate chasing does not just
+            waste effort — it destroys the value it is trying to recover.
+          </p>
+        </div>
+      </div>
     ),
   },
   {
     id: "actions",
     title: "Six permitted actions",
-    groundClass: "bg-paper",
     dark: false,
     render: () => (
-      <RailPanel
-        left={
-          <Head
-            index="02"
-            eyebrow="the action space"
-            title="Six permitted actions. Nothing else exists."
-            size="sm"
-            lede="The set is closed and priced. TRACE cannot invent an action, change an amount, move money, or contact a customer outside these paths — so the worst case is bounded by construction, not by hoping the model behaves."
-          />
-        }
-        right={<ActionLedger />}
-      />
+      <div className="grid items-center gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)]">
+        <Head
+          index="02"
+          eyebrow="the action space"
+          title="Six permitted actions. Nothing else exists."
+          size="sm"
+          lede="The set is closed and priced. TRACE cannot invent an action, change an amount, move money, or contact a customer outside these paths — so the worst case is bounded by construction, not by hoping the model behaves."
+        />
+        <ActionLedger />
+      </div>
     ),
   },
   {
     id: "policy",
     title: "Nine policy rules",
-    groundClass: "bg-paper-alt",
     dark: false,
     render: () => (
-      <RailPanel
-        left={
-          <>
-            <Head
-              index="03"
-              eyebrow="the control layer"
-              title="Agent decides. Policy controls."
-              size="sm"
-              lede="Deterministic, with no dependency on the agent. It behaves identically no matter what produced the proposal — which is what makes the safety properties verifiable independently of the AI."
-            />
-            <div className="mt-8 border-l-2 border-graphite pl-5">
-              <h3 className="display text-xl">A regulator writes one of the rules</h3>
-              <p className="mt-2 text-sm leading-relaxed text-graphite/70">
-                NPCI mandates auto-reversal of most failed UPI transactions within roughly sixty
-                minutes. Past that window the money is already back with the customer. TRACE gives
-                bank timeouts a sixty-minute window and refuses to chase them afterwards — chasing
-                a reversed transaction contacts a customer about money they already have.
-              </p>
-            </div>
-          </>
-        }
-        right={
-          <table className="w-full border-collapse text-left">
-            <thead>
-              <tr>
-                <Th w="10%">Rule</Th>
-                <Th>Condition</Th>
-                <Th align="right" w="30%">
-                  Verdict
-                </Th>
+      <div className="grid items-center gap-x-12 gap-y-8 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)]">
+        <div>
+          <Head
+            index="03"
+            eyebrow="the control layer"
+            title="Agent decides. Policy controls."
+            size="sm"
+            lede="Deterministic, with no dependency on the agent. It behaves identically no matter what produced the proposal — which is what makes the safety properties verifiable independently of the AI."
+          />
+          <div className="mt-8 border-l-2 border-graphite pl-5">
+            <h3 className="display text-xl">A regulator writes one of the rules</h3>
+            <p className="mt-2 text-sm leading-relaxed text-graphite/70">
+              NPCI mandates auto-reversal of most failed UPI transactions within roughly sixty
+              minutes. Past that window the money is already back with the customer. TRACE gives
+              bank timeouts a sixty-minute window and refuses to chase them afterwards — chasing a
+              reversed transaction contacts a customer about money they already have.
+            </p>
+          </div>
+        </div>
+        <table className="w-full border-collapse text-left">
+          <thead>
+            <tr>
+              <Th w="10%">Rule</Th>
+              <Th>Condition</Th>
+              <Th align="right" w="30%">
+                Verdict
+              </Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-rule">
+            {RULES.map(([cond, verdict], i) => (
+              <tr key={cond}>
+                <td className="tnum py-2.5 pr-6 text-sm text-graphite/40">
+                  {String(i + 1).padStart(2, "0")}
+                </td>
+                <td className="py-2.5 pr-6 text-sm text-graphite/75">{cond}</td>
+                <td className={`py-2.5 pl-6 text-right text-xs font-semibold ${VERDICT[verdict]}`}>
+                  {verdict}
+                </td>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-rule">
-              {RULES.map(([cond, verdict], i) => (
-                <tr key={cond}>
-                  <td className="tnum py-2.5 pr-6 text-sm text-graphite/40">
-                    {String(i + 1).padStart(2, "0")}
-                  </td>
-                  <td className="py-2.5 pr-6 text-sm text-graphite/75">{cond}</td>
-                  <td className={`py-2.5 pl-6 text-right text-xs font-semibold ${VERDICT[verdict]}`}>
-                    {verdict}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        }
-      />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ),
+  },
+  {
+    id: "loop",
+    title: "The recovery loop",
+    dark: false,
+    render: () => (
+      <div>
+        <Head
+          index="04"
+          eyebrow="the loop"
+          title="One loop, bounded at four iterations."
+          size="sm"
+          lede="It reassesses after every outcome and it stops on its own. Watch a single case run and the context change under it."
+        />
+        <div className="mt-10">
+          <RecoveryLoop />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "engines",
+    title: "Two engines",
+    dark: true,
+    render: () => (
+      <div>
+        <Head
+          index="05"
+          eyebrow="two engines, one interface"
+          title="Pay for thinking only where it changes the answer."
+          dark
+          size="sm"
+          lede="A deterministic scoring engine runs on every case: free, instant, explainable. The LLM is called only when the heuristic is not trustworthy enough on its own — roughly 22% of live decisions. Move the controls and watch which engine takes the case, and why."
+        />
+        <div className="mt-10">
+          <RoutingExplainer />
+        </div>
+        <div className="mt-10 grid gap-5 sm:grid-cols-2">
+          <Panel dark>
+            <h3 className="display text-xl text-cream">Deterministic on purpose</h3>
+            <p className="mt-3 text-sm leading-relaxed text-cream-dim">
+              The 300-case comparison runs the heuristic engine only, with no network calls. Same
+              seed, same dataset, same result every time — reproducibility is what makes it
+              evidence rather than an anecdote.
+            </p>
+          </Panel>
+          <Panel dark>
+            <h3 className="display text-xl text-cream">The live path is routed</h3>
+            <p className="mt-3 text-sm leading-relaxed text-cream-dim">
+              Individually ingested cases use the router, so genuinely ambiguous ones reach the
+              LLM. That is where the hero adjudication came from. The batch harness refuses a
+              routed mode outright.
+            </p>
+          </Panel>
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "results",
+    title: "Measured results",
+    dark: false,
+    render: () => (
+      <div>
+        <Head
+          index="06"
+          eyebrow="measured results"
+          title="The work correctly left undone."
+          size="sm"
+          lede="300 synthetic failed payments run through TRACE and through a fixed-rule baseline on identical data. One row settles the argument."
+        />
+        <div className="mt-10">
+          <ResultsPanel />
+        </div>
+      </div>
+    ),
+  },
+  {
+    id: "audit",
+    title: "The audit trail",
+    dark: true,
+    render: () => (
+      <div>
+        <Head
+          index="07"
+          eyebrow="the audit trail"
+          title="Every step is on the record."
+          dark
+          size="sm"
+          lede="Any case can be reconstructed afterwards. Each step below is appended to an immutable trail with its timestamp — a failed reasoning call is recorded as a failed reasoning call, never as a judgment the system did not make."
+        />
+        <Panel dark className="mt-10">
+          <ul className="divide-y divide-cream/10">
+            {TRAIL.map(([step, detail], i) => (
+              <li
+                key={step}
+                className="grid gap-x-6 gap-y-1 py-3.5 first:pt-0 last:pb-0 sm:grid-cols-[3rem_9rem_minmax(0,1fr)]"
+              >
+                <span aria-hidden="true" className="eyebrow tnum text-cream-dim/40">
+                  /{String(i + 1).padStart(2, "0")}
+                </span>
+                <span className="text-sm font-semibold text-cream">{step}</span>
+                <span className="text-sm leading-relaxed text-cream-dim">{detail}</span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+        <Note dark>
+          The trail is append-only. Nothing in it is rewritten when a later iteration changes the
+          case, which is what lets a reviewer reconstruct what was known at each decision rather
+          than only how the case ended.
+        </Note>
+      </div>
     ),
   },
 ];
@@ -313,6 +358,8 @@ const CHAPTERS = [
 /* ---------------------------------------------------------------------- page */
 
 export default function Landing() {
+  const [deckRef, deckSeen] = useInView();
+
   return (
     <div className="landing-page min-h-screen bg-void text-cream antialiased">
       <a
@@ -373,128 +420,57 @@ export default function Landing() {
             <div className="mt-12">
               <HeroAdjudication />
             </div>
-
-            <div className="eyebrow mt-14 flex items-center gap-4 text-cream-dim/50">
-              <span>scroll</span>
-              <span aria-hidden="true" className="h-px w-16 bg-cream-dim/30" />
-            </div>
           </div>
         </div>
 
-        {/* ----------------------------------------- 01–03, advancing sideways */}
-        <HorizontalSequence panels={CHAPTERS} label="The argument, chapters 01 to 03" />
-
-        {/* ----------------------------------------- 04–08, one vertical system */}
-        <Chapter
-          index="04"
-          eyebrow="the loop"
-          title="One loop, bounded at four iterations."
-          ground="cream"
-          lede="It reassesses after every outcome and it stops on its own. Scroll through a single case and watch the context change under it."
-        >
-          <RecoveryLoop />
-        </Chapter>
-
-        <Chapter
-          index="05"
-          eyebrow="two engines, one interface"
-          title="Pay for thinking only where it changes the answer."
-          ground="void"
-          textured
-          lede="A deterministic scoring engine runs on every case: free, instant, explainable. The LLM is called only when the heuristic is not trustworthy enough on its own — roughly 22% of live decisions. Move the controls and watch which engine takes the case, and why."
-        >
-          <RoutingExplainer />
-
-          <div className="mt-12 grid gap-5 sm:grid-cols-2">
-            <Panel dark>
-              <h3 className="display text-xl text-cream">Deterministic on purpose</h3>
-              <p className="mt-3 text-sm leading-relaxed text-cream-dim">
-                The 300-case comparison below runs the heuristic engine only, with no network
-                calls. Same seed, same dataset, same result every time. That reproducibility is
-                what makes it evidence rather than an anecdote — an LLM in the loop would make the
-                benchmark unrepeatable and therefore worthless as a claim.
-              </p>
-            </Panel>
-            <Panel dark>
-              <h3 className="display text-xl text-cream">The live path is routed</h3>
-              <p className="mt-3 text-sm leading-relaxed text-cream-dim">
-                Individually ingested cases use the router, so genuinely ambiguous ones reach the
-                LLM. That is where the hero adjudication came from. The batch harness refuses a
-                routed mode outright rather than letting it silently make the benchmark
-                non-reproducible.
-              </p>
-            </Panel>
+        {/* --------------------------------------- the deck: chapters 01–07 */}
+        <section className="relative overflow-hidden border-t border-void-line/70 bg-void-soft">
+          <div aria-hidden="true" className="tex-dots pointer-events-none absolute inset-0 opacity-60" />
+          <div className="relative mx-auto w-full max-w-5xl px-6 py-20 sm:px-10 sm:py-24">
+            <div ref={deckRef} className={deckSeen ? "anim-rise" : "opacity-0"}>
+              <div className="mb-8 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+                <h2 className="display text-[2rem] text-cream sm:text-[2.6rem]">The argument</h2>
+                <span className="eyebrow text-cream-dim/60">
+                  / seven cards — turn them at your own pace
+                </span>
+              </div>
+              <CardDeck cards={CARDS} label="The argument, chapters 01 to 07" />
+            </div>
           </div>
-        </Chapter>
+        </section>
 
-        <Chapter
-          index="06"
-          eyebrow="measured results"
-          title="The work correctly left undone."
-          ground="cream"
-          lede="300 synthetic failed payments run through TRACE and through a fixed-rule baseline on identical data. One row settles the argument."
-        >
-          <ResultsPanel />
-        </Chapter>
-
-        <Chapter
-          index="07"
-          eyebrow="the audit trail"
-          title="Every step is on the record."
-          ground="voidSoft"
-          textured
-          lede="Any case can be reconstructed afterwards. Each step below is appended to an immutable trail with its timestamp — a failed reasoning call is recorded as a failed reasoning call, never as a judgment the system did not make."
-        >
-          <Panel dark>
-            <ul className="divide-y divide-cream/10">
-              {TRAIL.map(([step, detail], i) => (
-                <li
-                  key={step}
-                  className="grid gap-x-6 gap-y-1 py-3.5 first:pt-0 last:pb-0 sm:grid-cols-[3rem_9rem_minmax(0,1fr)]"
-                >
-                  <span aria-hidden="true" className="eyebrow tnum text-cream-dim/40">
-                    /{String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className="text-sm font-semibold text-cream">{step}</span>
-                  <span className="text-sm leading-relaxed text-cream-dim">{detail}</span>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-          <Note dark>
-            The trail is append-only. Nothing in it is rewritten when a later iteration changes the
-            case, which is what lets a reviewer reconstruct what was known at each decision rather
-            than only how the case ended.
-          </Note>
-        </Chapter>
-
-        <Chapter
-          index="08"
-          eyebrow="open the console"
-          title="See it adjudicate a live case."
-          ground="void"
-          textured
-          lede="The console carries the live recovery queue, the full policy configuration read directly from the running service, the TRACE-versus-baseline comparison, and a case investigation view that shows the complete audit trail for any payment."
-        >
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
-            <Link
-              to="/dashboard"
-              className="group inline-flex items-center gap-2.5 rounded-xs bg-electric px-6 py-3.5 text-sm font-semibold text-white shadow-[0_16px_40px_-16px_rgba(47,48,255,0.9)] transition-transform hover:-translate-y-0.5"
-            >
-              Open the console
-              <ArrowRight
-                className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
-                strokeWidth={2}
-              />
-            </Link>
-            <Link
-              to="/policy"
-              className="inline-flex items-center border-b border-cream-dim/50 pb-0.5 text-sm font-medium text-cream transition-colors hover:border-electric hover:text-electric"
-            >
-              Read the policy rules
-            </Link>
+        {/* --------------------------------------------------------- 08 CTA */}
+        <section className="relative overflow-hidden border-t border-void-line/70 bg-void">
+          <div aria-hidden="true" className="tex-dots pointer-events-none absolute inset-0 opacity-70" />
+          <div aria-hidden="true" className="tex-glow pointer-events-none absolute inset-0" />
+          <div className="relative mx-auto w-full max-w-5xl px-6 py-20 sm:px-10 sm:py-24">
+            <Head
+              index="08"
+              eyebrow="open the console"
+              title="See it adjudicate a live case."
+              dark
+              lede="The console carries the live recovery queue, the full policy configuration read directly from the running service, the TRACE-versus-baseline comparison, and a case investigation view that shows the complete audit trail for any payment."
+            />
+            <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4">
+              <Link
+                to="/dashboard"
+                className="group inline-flex items-center gap-2.5 rounded-xs bg-electric px-6 py-3.5 text-sm font-semibold text-white shadow-[0_16px_40px_-16px_rgba(47,48,255,0.9)] transition-transform hover:-translate-y-0.5"
+              >
+                Open the console
+                <ArrowRight
+                  className="h-4 w-4 transition-transform group-hover:translate-x-0.5"
+                  strokeWidth={2}
+                />
+              </Link>
+              <Link
+                to="/policy"
+                className="inline-flex items-center border-b border-cream-dim/50 pb-0.5 text-sm font-medium text-cream transition-colors hover:border-electric hover:text-electric"
+              >
+                Read the policy rules
+              </Link>
+            </div>
           </div>
-        </Chapter>
+        </section>
       </main>
 
       <footer className="border-t border-void-line/70 bg-void">
