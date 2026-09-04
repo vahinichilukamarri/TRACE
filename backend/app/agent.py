@@ -22,6 +22,7 @@ everything downstream (policy, execution, audit) is engine-agnostic.
 """
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 
 from app.enums import ActionType, DecisionType, AgentMode, FailureType
@@ -47,6 +48,10 @@ class AgentDecisionResult:
     net_expected_value: float = 0.0
     # ROUTED mode only: why this engine was chosen for this case.
     route_reason: str | None = None
+    # When is_fallback: RATE_LIMITED vs REASONING_FAILURE. Transient
+    # back-pressure is not the model failing to reason, and the audit trail
+    # must not read the two the same.
+    fallback_cause: str | None = None
 
 
 # Only these actions directly attempt to recover the payment on this turn.
@@ -267,8 +272,32 @@ Respond with ONLY a JSON object, no other text:
 # the boundary -- observed live: completion_tokens=323 succeeded, but a
 # slightly longer chain hit finish_reason="length" and returned EMPTY content,
 # which failed JSON parsing and silently escalated the case to human review.
-# 1500 leaves real headroom (observed usage ~410-430 tokens).
-LLM_DECIDE_MAX_TOKENS = 1500
+# 800 leaves headroom over the observed 410-430 while keeping the reservation
+# small: Groq bills the REQUESTED max_tokens against the per-minute budget, so
+# an oversized reservation burns the TPM allowance -- and triggers the very
+# 429s this retry logic exists for -- far faster than the call actually needs.
+LLM_DECIDE_MAX_TOKENS = 800
+
+# Sentinel for "rate limited, retries exhausted", returned instead of None so
+# callers can label the fallback honestly without changing _llm_decide's
+# single-argument signature.
+RATE_LIMITED = object()
+
+FALLBACK_RATE_LIMITED = "RATE_LIMITED"
+FALLBACK_REASONING_FAILURE = "REASONING_FAILURE"
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    """True only for 429 / rate-limit back-pressure.
+
+    Deliberately narrow: every other error class is deterministic, so retrying
+    it cannot help and would only delay the fallback and waste quota.
+    """
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    if type(exc).__name__ == "RateLimitError":
+        return True
+    return "rate_limit_exceeded" in str(exc)
 
 
 def _llm_decide(context: dict) -> AgentDecisionResult | None:
@@ -278,20 +307,52 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
     if not settings.GROQ_API_KEY:
         return None
     payment_id = context.get("payment_id", "<unknown>")
+    budget = settings.LLM_CALL_MAX_WALL_CLOCK_SECONDS
+    deadline = time.monotonic() + budget
     try:
         from groq import Groq
         # Bounded like the classifier: never let a slow/retrying API call stall
         # the request and hold the DB write transaction open.
-        client = Groq(api_key=settings.GROQ_API_KEY, timeout=15.0, max_retries=0)
+        # max_retries=0 because we run our own 429-only, deadline-aware retry
+        # below; the SDK's built-in retry would also retry unrecoverable errors.
+        client = Groq(api_key=settings.GROQ_API_KEY, timeout=budget, max_retries=0)
         user_prompt = "Recovery case context:\n" + json.dumps(context, indent=2)
-        resp = client.chat.completions.create(
-            model=settings.GROQ_MODEL,
-            max_tokens=LLM_DECIDE_MAX_TOKENS,
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        attempts = max(1, settings.LLM_RATE_LIMIT_MAX_RETRIES + 1)
+        resp = None
+        for attempt in range(attempts):
+            try:
+                resp = client.chat.completions.create(
+                    model=settings.GROQ_MODEL,
+                    max_tokens=LLM_DECIDE_MAX_TOKENS,
+                    messages=[
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                )
+                break
+            except Exception as exc:
+                # Only 429s earn another attempt; anything else falls straight
+                # through to the handler below.
+                if not _is_rate_limit(exc) or attempt == attempts - 1:
+                    raise
+                delay = settings.LLM_RATE_LIMIT_BACKOFF_SECONDS * (
+                    settings.LLM_RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt
+                )
+                if delay >= deadline - time.monotonic():
+                    # Sleeping would blow the wall-clock ceiling. Give up here
+                    # rather than let a retry stall the request.
+                    logger.warning(
+                        "LLM decision for %s rate limited; no time left in the "
+                        "%.1fs budget to retry (attempt %d/%d).",
+                        payment_id, budget, attempt + 1, attempts,
+                    )
+                    return RATE_LIMITED
+                logger.warning(
+                    "LLM decision for %s rate limited (attempt %d/%d); retrying "
+                    "in %.2fs.", payment_id, attempt + 1, attempts, delay,
+                )
+                time.sleep(delay)
+
         choice = resp.choices[0]
         text = (choice.message.content or "").strip()
 
@@ -337,6 +398,14 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
             raw=data,
         )
     except Exception as exc:
+        if _is_rate_limit(exc):
+            logger.warning(
+                "LLM decision for %s rate limited after %d attempt(s); giving up "
+                "and falling back to human review (%s).",
+                payment_id, max(1, settings.LLM_RATE_LIMIT_MAX_RETRIES + 1),
+                type(exc).__name__,
+            )
+            return RATE_LIMITED
         logger.warning(
             "LLM decision for %s failed (%s: %s); falling back to human review.",
             payment_id, type(exc).__name__, exc,
@@ -344,15 +413,36 @@ def _llm_decide(context: dict) -> AgentDecisionResult | None:
         return None
 
 
-def _llm_failure_fallback() -> AgentDecisionResult:
+def _llm_failure_fallback(rate_limited: bool = False) -> AgentDecisionResult:
+    """Safe fallback when the reasoning call did not produce an answer.
+
+    Rate limiting and a genuine reasoning failure are different events: one is
+    transient back-pressure that says nothing about the case, the other means
+    the model was asked and could not answer usefully. Both escalate, but they
+    must not read the same in the audit trail.
+    """
+    if rate_limited:
+        reasoning = (
+            "Reasoning provider was rate limited and did not respond within the "
+            "retry budget; flagged for human review. This is transient capacity "
+            "back-pressure, not a judgement about this case."
+        )
+    else:
+        reasoning = (
+            "Agent reasoning call failed or returned an invalid response; flagged "
+            "for human review rather than guessing."
+        )
     return AgentDecisionResult(
         # NOT a decline: the engine never got to evaluate this case.
         decision=DecisionType.EVALUATION_UNAVAILABLE,
         action=ActionType.ESCALATE_FOR_REVIEW,
         confidence=0.0,
-        reasoning="Agent reasoning call failed or returned an invalid response; flagged for human review rather than guessing.",
+        reasoning=reasoning,
         agent_mode=AgentMode.LLM,
         is_fallback=True,
+        fallback_cause=(
+            FALLBACK_RATE_LIMITED if rate_limited else FALLBACK_REASONING_FAILURE
+        ),
     )
 
 
@@ -500,13 +590,18 @@ def _routed_decide(context: dict) -> AgentDecisionResult:
         return heuristic
 
     llm_result = _llm_decide(context)
-    if llm_result is None:
+    if llm_result is None or llm_result is RATE_LIMITED:
         # A genuine mid-flight failure is NOT the same as never having tried.
         # Something was asked to reason and failed, so per spec section 20 that
         # surfaces as FLAGGED_FOR_REVIEW. Silently substituting the heuristic
         # answer here would misrepresent what actually decided this case.
-        fallback = _llm_failure_fallback()
-        fallback.route_reason = f"{reason}; LLM call failed"
+        rate_limited = llm_result is RATE_LIMITED
+        fallback = _llm_failure_fallback(rate_limited=rate_limited)
+        fallback.route_reason = (
+            f"{reason}; LLM rate limited after "
+            f"{max(1, settings.LLM_RATE_LIMIT_MAX_RETRIES + 1)} attempt(s)"
+            if rate_limited else f"{reason}; LLM call failed"
+        )
         return fallback
 
     llm_result.route_reason = reason
@@ -521,8 +616,8 @@ def decide(context: dict, mode: str | None = None) -> AgentDecisionResult:
     mode = (mode or settings.AGENT_MODE).upper()
     if mode == AgentMode.LLM.value:
         result = _llm_decide(context)
-        if result is None:
-            result = _llm_failure_fallback()
+        if result is None or result is RATE_LIMITED:
+            result = _llm_failure_fallback(rate_limited=result is RATE_LIMITED)
     elif mode == AgentMode.ROUTED.value:
         result = _routed_decide(context)
     else:

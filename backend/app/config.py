@@ -56,6 +56,23 @@ class Settings:
     # the heuristic is blind and real reasoning has something to add.
     LLM_ROUTE_ON_PRIOR_EVIDENCE: bool = _env_bool("LLM_ROUTE_ON_PRIOR_EVIDENCE", True)
 
+    # --- LLM call resilience ---
+    # A 429 is transient back-pressure, not a reasoning failure, so it is the one
+    # error class worth retrying. Everything else (auth, parse, empty content,
+    # invented action) is deterministic -- retrying it just burns the TPM budget
+    # and delays the fallback.
+    LLM_RATE_LIMIT_MAX_RETRIES: int = int(os.getenv("LLM_RATE_LIMIT_MAX_RETRIES", "2"))
+    # Backoff between retries: base, then base*multiplier (0.5s, then 1.5s).
+    LLM_RATE_LIMIT_BACKOFF_SECONDS: float = float(
+        os.getenv("LLM_RATE_LIMIT_BACKOFF_SECONDS", "0.5"))
+    LLM_RATE_LIMIT_BACKOFF_MULTIPLIER: float = float(
+        os.getenv("LLM_RATE_LIMIT_BACKOFF_MULTIPLIER", "3.0"))
+    # Hard ceiling on ONE decision call including every retry and backoff sleep.
+    # Retries must never let a request stall: the whole attempt chain stays
+    # inside this budget, and a retry is skipped if it would not fit.
+    LLM_CALL_MAX_WALL_CLOCK_SECONDS: float = float(
+        os.getenv("LLM_CALL_MAX_WALL_CLOCK_SECONDS", "15.0"))
+
     # --- Policy ---
     MAX_RECOVERY_ATTEMPTS: int = int(os.getenv("MAX_RECOVERY_ATTEMPTS", "3"))
     RECOVERY_WINDOW_MINUTES: int = int(os.getenv("RECOVERY_WINDOW_MINUTES", "4320"))  # 3 days

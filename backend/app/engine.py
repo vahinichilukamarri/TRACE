@@ -87,8 +87,18 @@ def run_iteration(db: Session, case: RecoveryCase, rng: random.Random, agent_mod
         "route_reason": decision_record.route_reason,
     })
     if decision_result.is_fallback:
-        log_event(db, case.id, AuditEventType.AGENT_FALLBACK,
-                   notes="LLM reasoning call failed; safe fallback (FLAGGED_FOR_REVIEW) applied.")
+        # Rate limiting and a reasoning failure are different events; the audit
+        # trail records which one actually happened.
+        if decision_result.fallback_cause == "RATE_LIMITED":
+            notes = (
+                "Reasoning provider rate limited (429) and retries were exhausted; "
+                "safe fallback (ESCALATE_FOR_REVIEW) applied. Transient capacity "
+                "back-pressure, not a reasoning failure."
+            )
+        else:
+            notes = "LLM reasoning call failed; safe fallback (ESCALATE_FOR_REVIEW) applied."
+        log_event(db, case.id, AuditEventType.AGENT_FALLBACK, notes=notes,
+                   payload={"fallback_cause": decision_result.fallback_cause})
 
     history = _action_history(db, case)
     policy_result = check_policy(context, decision_record.action, decision_record.confidence, history)
