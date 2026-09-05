@@ -374,7 +374,7 @@ export default function Landing() {
           <div className="flex items-baseline gap-3">
             <span className="display text-2xl tracking-tight text-cream">TRACE</span>
             <span className="eyebrow hidden text-cream-dim/70 sm:inline">
-              / transaction recovery agent
+              / transaction recovery agent with contextual evaluation
             </span>
           </div>
           <Link
@@ -398,7 +398,6 @@ export default function Landing() {
 
           <div className="relative mx-auto w-full max-w-5xl px-6 pb-20 pt-14 sm:px-10 sm:pb-24 sm:pt-20">
             <div className="eyebrow anim-rise text-electric">
-              / razorpay ai buildathon — track 03
             </div>
 
             <h1
