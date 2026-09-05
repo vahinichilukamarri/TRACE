@@ -1,33 +1,57 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  Legend,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-} from "recharts";
+import { Zap } from "lucide-react";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader, Section } from "@/components/Page";
-import { ChartContainer } from "@/components/ChartContainer";
 import { RunSelector } from "@/components/RunSelector";
+import { RecoveryRace } from "@/components/RecoveryRace";
 import { ComparisonMetric } from "@/components/ComparisonMetric";
 import { EmptyState, ErrorState, LoadingState } from "@/components/States";
 import { formatCompactCurrency, formatCurrency, formatPercentFromWhole } from "@/lib/format";
-import { Zap } from "lucide-react";
 
-const TOOLTIP_STYLE = {
-  background: "#1A1A1A",
-  border: "1px solid #2A2A28",
-  fontSize: 11,
-  fontFamily: "IBM Plex Mono, monospace",
-  color: "#F5F2EA",
-};
+/*
+ * The evidence, in the order a sceptic would want it: how much effort buys, a
+ * race showing TRACE buying more with the same effort, the work it correctly
+ * never did, where the money ended up, and then the full table for anyone who
+ * wants to audit the claim.
+ *
+ * Both charts here are drawn by hand rather than by a chart library: they carry
+ * the ledger's own palette and, more importantly, they are shaped so the point
+ * lands before any axis label is read.
+ */
+
+/** One bar in the revenue split -- a share of a pot, not an abstract quantity. */
+function ShareBar({ label, value, total, tone, delay = 0 }) {
+  const pct = total > 0 ? (value / total) * 100 : 0;
+  const isTrace = tone === "trace";
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-5 gap-y-2 border-b border-rule py-4 last:border-b-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_9rem]">
+      <div className={`eyebrow ${isTrace ? "text-approve-deep" : "text-graphite/70"}`}>{label}</div>
+
+      <div className="col-span-2 h-7 overflow-hidden rounded-xs bg-graphite/10 sm:col-span-1">
+        <div
+          className={`bar-grow h-full rounded-r-xs ${
+            isTrace ? "bg-gradient-to-r from-approve to-approve-deep" : "bg-graphite/50"
+          }`}
+          style={{ width: `${pct}%`, animationDelay: `${delay}ms` }}
+        />
+      </div>
+
+      <div className="text-right">
+        <div
+          className={`tnum wrap-id text-lg font-semibold ${
+            isTrace ? "text-approve-deep" : "text-graphite/80"
+          }`}
+        >
+          {formatCompactCurrency(value)}
+        </div>
+        <div className="tnum text-[11px] text-graphite/70">
+          {pct.toFixed(1)}% of the pot recovered
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function Performance() {
   const [selectedRun, setSelectedRun] = useState(null);
@@ -51,11 +75,17 @@ export default function Performance() {
 
   const noRunYet = error && error.status === 404;
 
-  if (loading) return <div className="px-8 py-8"><LoadingState label="Loading performance data" /></div>;
+  if (loading) {
+    return (
+      <div className="px-6 py-8 sm:px-8">
+        <LoadingState label="Loading performance data" />
+      </div>
+    );
+  }
 
   if (noRunYet) {
     return (
-      <div className="px-8 py-8">
+      <div className="px-6 py-8 sm:px-8">
         <EmptyState
           icon={Zap}
           title="No evaluation run yet"
@@ -67,7 +97,7 @@ export default function Performance() {
 
   if (error) {
     return (
-      <div className="px-8 py-8">
+      <div className="px-6 py-8 sm:px-8">
         <ErrorState description={error.message} onRetry={refresh} />
       </div>
     );
@@ -77,12 +107,17 @@ export default function Performance() {
   const baseline = data?.BASELINE;
   if (!trace || !baseline) return null;
 
-  const revenueChartData = [
-    { name: "Revenue at risk", Baseline: baseline.revenue_at_risk, TRACE: trace.revenue_at_risk },
-    { name: "Revenue recovered", Baseline: baseline.revenue_recovered, TRACE: trace.revenue_recovered },
-  ];
+  const efficiencyImproved =
+    trace.recovery_value_per_intervention >= baseline.recovery_value_per_intervention;
+  const efficiencyDelta = baseline.recovery_value_per_intervention
+    ? Math.abs(
+        ((trace.recovery_value_per_intervention - baseline.recovery_value_per_intervention) /
+          baseline.recovery_value_per_intervention) *
+          100
+      ).toFixed(1)
+    : null;
 
-  const efficiencyImproved = trace.recovery_value_per_intervention >= baseline.recovery_value_per_intervention;
+  const revenueEdge = trace.revenue_recovered - baseline.revenue_recovered;
 
   return (
     <div>
@@ -93,116 +128,110 @@ export default function Performance() {
         action={<RunSelector value={selectedRun} onChange={setSelectedRun} />}
       />
 
-      <div className="px-8 py-8 space-y-10">
-        {/* Hero: recovery value per intervention */}
-        <Section>
-          <div className="border border-signal-orange/30 bg-signal-orange-dim/5 p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-            <div>
-              <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-signal-orange mb-2">
-                Recovery value per intervention
-              </div>
-              <div className="mono-tabular text-5xl font-semibold text-bone">
-                {formatCurrency(trace.recovery_value_per_intervention)}
-              </div>
-              <div className="text-xs text-ink-faint font-mono mt-2">
-                vs {formatCurrency(baseline.recovery_value_per_intervention)} baseline
-              </div>
-            </div>
-            <div
-              className={`text-sm font-mono px-4 py-2 border ${
-                efficiencyImproved
-                  ? "border-signal-mint/40 text-signal-mint bg-signal-mint-dim/10"
-                  : "border-signal-red/40 text-signal-red bg-signal-red-dim/10"
-              }`}
-            >
-              {efficiencyImproved ? "▲" : "▼"}{" "}
-              {baseline.recovery_value_per_intervention
-                ? Math.abs(
-                    ((trace.recovery_value_per_intervention - baseline.recovery_value_per_intervention) /
-                      baseline.recovery_value_per_intervention) *
-                      100
-                  ).toFixed(1)
-                : "—"}
-              % vs baseline
-            </div>
+      <div className="space-y-10 px-6 py-8 sm:px-8">
+        {/* ------------------------------- what one intervention is worth */}
+        <div className="record p-6 sm:p-7">
+          <div className="eyebrow text-graphite/60">/ recovery value per intervention</div>
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-3">
+            <span className="tnum wrap-id text-4xl font-semibold leading-none text-graphite sm:text-5xl">
+              {formatCurrency(trace.recovery_value_per_intervention)}
+            </span>
+            <span className="tnum text-sm text-graphite/70">
+              vs {formatCurrency(baseline.recovery_value_per_intervention)} baseline
+            </span>
+            {efficiencyDelta && (
+              <span
+                className={`tnum rounded-xs px-2.5 py-1 text-sm font-semibold ${
+                  efficiencyImproved
+                    ? "bg-approve-soft text-approve-deep"
+                    : "bg-block-soft text-block-deep"
+                }`}
+              >
+                {efficiencyImproved ? "▲" : "▼"} {efficiencyDelta}%
+              </span>
+            )}
           </div>
-        </Section>
-
-        {/* Revenue comparison chart */}
-        <Section title="Revenue at risk vs recovered">
-          <ChartContainer title="Revenue (₹)" subtitle="Baseline vs TRACE, same evaluation batch">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={revenueChartData} barGap={6}>
-                <CartesianGrid strokeDasharray="2 4" stroke="#2A2A28" vertical={false} />
-                <XAxis dataKey="name" tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={{ stroke: "#2A2A28" }} tickLine={false} />
-                <YAxis tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }} axisLine={false} tickLine={false} tickFormatter={(v) => formatCompactCurrency(v)} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(v)} />
-                <Bar dataKey="Baseline" fill="#8A8781" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="TRACE" fill="#FF6B35" radius={[2, 2, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartContainer>
-        </Section>
-
-        {/* Recovery efficiency frontier */}
-        {frontier?.TRACE && frontier?.BASELINE && (
-          <Section title="Recovery efficiency frontier">
-            <p className="text-xs text-ink-faint leading-relaxed max-w-3xl mb-4">
-              Cumulative revenue recovered as interventions accumulate, with each system's
-              best-value cases spent first. A curve that climbs faster per intervention is
-              recovering more revenue for the same amount of effort — the visual proof of TRACE's
-              "maximize intelligent effort, not attempt count" thesis.
+          <div className="rule-double mt-5 pt-3">
+            <p className="wrap-prose max-w-3xl text-sm leading-relaxed text-graphite/80">
+              Every recovery action TRACE takes brings back{" "}
+              {formatCurrency(trace.recovery_value_per_intervention)} on average. The baseline
+              spends the same kind of action and gets back{" "}
+              {formatCurrency(baseline.recovery_value_per_intervention)}.
             </p>
-            <ChartContainer
-              title="Cumulative revenue recovered (₹)"
-              subtitle="By cumulative interventions — best value density first"
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart>
-                  <CartesianGrid strokeDasharray="2 4" stroke="#2A2A28" vertical={false} />
-                  <XAxis
-                    type="number"
-                    dataKey="interventions"
-                    domain={["dataMin", "dataMax"]}
-                    tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }}
-                    axisLine={{ stroke: "#2A2A28" }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fill: "#8A8781", fontSize: 11, fontFamily: "IBM Plex Mono" }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v) => formatCompactCurrency(v)}
-                  />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => formatCurrency(v)} />
-                  <Legend wrapperStyle={{ fontSize: 11, fontFamily: "IBM Plex Mono" }} />
-                  <Line
-                    data={frontier.BASELINE}
-                    dataKey="revenue_recovered"
-                    name="Baseline"
-                    stroke="#8A8781"
-                    type="stepAfter"
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                  <Line
-                    data={frontier.TRACE}
-                    dataKey="revenue_recovered"
-                    name="TRACE"
-                    stroke="#FF6B35"
-                    type="stepAfter"
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </ChartContainer>
+          </div>
+        </div>
+
+        {/* ------------------------------------------------------ the race */}
+        {frontier?.TRACE && frontier?.BASELINE && (
+          <Section title="Effort against return">
+            <RecoveryRace frontier={frontier} />
           </Section>
         )}
 
-        {/* Full metric comparison */}
+        {/* --------------------------------------------------- the thesis */}
+        <Section title="The thesis">
+          <div className="record p-6 sm:p-8">
+            <div className="eyebrow text-graphite/60">/ cases correctly never pursued</div>
+            <div className="mt-4 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+              <span className="tnum bg-gradient-to-br from-approve to-approve-deep bg-clip-text text-6xl font-bold leading-none text-transparent sm:text-7xl">
+                {trace.interventions_avoided}
+              </span>
+              <span className="text-lg text-graphite/70">versus</span>
+              <span className="tnum text-4xl font-semibold leading-none text-graphite/70 sm:text-5xl">
+                {baseline.interventions_avoided}
+              </span>
+              <span className="text-sm text-graphite/70">for the baseline</span>
+            </div>
+            <p className="wrap-prose mt-5 max-w-[62ch] text-[15px] leading-[1.75] text-graphite/80">
+              TRACE recovered more revenue while declining to touch{" "}
+              <span className="tnum font-semibold text-graphite">
+                {trace.interventions_avoided}
+              </span>{" "}
+              cases the baseline chased anyway. The thesis is not that the agent chases harder — it
+              is that effort concentrates where it pays, and the clearest evidence of judgment is
+              the work correctly left undone.
+            </p>
+          </div>
+        </Section>
+
+        {/* ------------------------------------------- where the money went */}
+        <Section title="Revenue recovered">
+          <div className="record overflow-hidden">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-4 pb-2 pt-4 sm:px-6">
+              <span className="eyebrow text-graphite/60">/ out of the same pot at risk</span>
+              <span className="tnum text-sm font-semibold text-graphite">
+                {formatCompactCurrency(trace.revenue_at_risk)} at risk ·{" "}
+                {trace.total_failed_payments} failed payments
+              </span>
+            </div>
+            <div className="rule-double mx-4 sm:mx-6">
+              <ShareBar
+                label="TRACE"
+                value={trace.revenue_recovered}
+                total={trace.revenue_at_risk}
+                tone="trace"
+              />
+              <ShareBar
+                label="Baseline"
+                value={baseline.revenue_recovered}
+                total={baseline.revenue_at_risk}
+                tone="baseline"
+                delay={160}
+              />
+            </div>
+            <p className="wrap-prose px-4 pb-4 pt-3 text-sm leading-relaxed text-graphite/80 sm:px-6">
+              TRACE returned{" "}
+              <span className="tnum font-semibold text-approve-deep">
+                {formatCompactCurrency(revenueEdge)}
+              </span>{" "}
+              more than the baseline from the identical set of failed payments.
+            </p>
+          </div>
+        </Section>
+
+        {/* ------------------------------------------- the auditable table */}
         <Section title="Full evaluation comparison">
-          <div className="border border-obsidian-line bg-obsidian-soft px-4">
+          <div className="record px-4 sm:px-6">
             <ComparisonMetric
               label="Total failed payments"
               baselineValue={baseline.total_failed_payments}
@@ -281,9 +310,10 @@ export default function Performance() {
           </div>
         </Section>
 
-        <div className="text-[11px] font-mono text-ink-faint">
-          Revenue figures are simulated financial outcomes from the evaluation harness, not real transactions.
-        </div>
+        <p className="text-[11px] text-cream-dim">
+          Revenue figures are simulated financial outcomes from the evaluation harness, not real
+          transactions.
+        </p>
       </div>
     </div>
   );

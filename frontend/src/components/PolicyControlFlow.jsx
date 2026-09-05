@@ -6,24 +6,25 @@ const OUTCOMES = [
   { label: "Flagged for review", signal: "amber" },
 ];
 
+/* Verdict chips, in the three reserved colours and nothing else. */
 const SIGNAL_TEXT = {
-  mint: "text-signal-mint border-signal-mint/40 bg-signal-mint-dim/10",
-  red: "text-signal-red border-signal-red/40 bg-signal-red-dim/10",
-  amber: "text-signal-amber border-signal-amber/40 bg-signal-amber-dim/10",
+  mint: "text-signal-mint border-signal-mint/40 bg-signal-mint-dim",
+  red: "text-signal-red border-signal-red/40 bg-signal-red-dim",
+  amber: "text-signal-amber border-signal-amber/40 bg-signal-amber-dim",
 };
 
 export function PolicyControlFlow() {
   return (
-    <div className="flex flex-col md:flex-row items-stretch gap-3">
+    <div className="flex flex-col items-stretch gap-3 lg:flex-row">
       <FlowNode label="TRACE request" sub="Agent's proposed action + confidence" />
       <Connector />
       <FlowNode label="Policy check" sub="Deterministic, no LLM involved" accent />
       <Connector />
-      <div className="flex-1 grid grid-cols-1 gap-2">
+      <div className="grid min-w-0 flex-1 grid-cols-1 gap-2">
         {OUTCOMES.map((o) => (
           <div
             key={o.label}
-            className={`border px-3 py-2 text-xs font-mono uppercase tracking-wide text-center ${SIGNAL_TEXT[o.signal]}`}
+            className={`rounded-xs border px-3 py-2 text-center text-[11px] font-semibold uppercase tracking-[0.1em] ${SIGNAL_TEXT[o.signal]}`}
           >
             {o.label}
           </div>
@@ -38,22 +39,26 @@ export function PolicyControlFlow() {
 function FlowNode({ label, sub, accent = false }) {
   return (
     <div
-      className={`flex-1 border p-4 flex flex-col justify-center ${
-        accent ? "border-signal-orange/40 bg-signal-orange-dim/5" : "border-obsidian-line bg-obsidian-soft"
+      className={`flex min-w-0 flex-1 flex-col justify-center rounded-xs border p-4 ${
+        accent ? "border-electric/40 bg-electric/8" : "border-rule bg-paper-hi"
       }`}
     >
-      <div className={`text-xs font-medium uppercase tracking-wide ${accent ? "text-signal-orange" : "text-bone"}`}>
+      <div
+        className={`text-xs font-semibold uppercase tracking-[0.08em] ${
+          accent ? "text-electric" : "text-graphite"
+        }`}
+      >
         {label}
       </div>
-      <div className="text-[11px] font-mono text-ink-faint mt-1">{sub}</div>
+      <div className="mt-1.5 text-[11px] leading-relaxed text-graphite/70">{sub}</div>
     </div>
   );
 }
 
 function Connector() {
   return (
-    <div className="hidden md:flex items-center justify-center px-1">
-      <ArrowRight className="w-4 h-4 text-ink-faint" strokeWidth={1.5} />
+    <div className="hidden items-center justify-center px-1 lg:flex">
+      <ArrowRight className="h-4 w-4 text-graphite/50" strokeWidth={1.5} />
     </div>
   );
 }

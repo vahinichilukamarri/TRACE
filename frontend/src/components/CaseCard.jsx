@@ -10,29 +10,36 @@ import { StatusPill } from "./StatusIndicator";
 import { RecoveryTraceLine } from "./RecoveryTraceLine";
 import { deriveTraceStageSummary } from "@/lib/caseStage";
 
+/* One case, as a cream document resting on the desk. */
 export function CaseCard({ caseData }) {
   const { activeIndex, finalSignal } = deriveTraceStageSummary(caseData);
 
   return (
     <Link
       to={`/cases/${encodeURIComponent(caseData.payment_id)}`}
-      className="block border border-obsidian-line bg-obsidian-soft hover:border-signal-orange/50 transition-colors p-4 group"
+      className="record group block p-4 transition-colors hover:border-electric/50"
     >
-      <div className="flex items-start justify-between gap-4 mb-3">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="font-mono text-xs text-ink-faint">{caseData.payment_id}</span>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {/* Payment IDs have no spaces to break on, so they get character
+                wrapping rather than a width they can push past. */}
+            <span className="tnum wrap-id min-w-0 text-xs text-graphite/70">
+              {caseData.payment_id}
+            </span>
             <StatusPill signal={STATUS_SIGNAL[caseData.status] || "neutral"}>
               {CASE_STATUS_LABELS[caseData.status] || caseData.status}
             </StatusPill>
           </div>
-          <div className="mono-tabular text-xl font-semibold text-bone">
+          <div className="tnum wrap-id text-xl font-semibold text-graphite">
             {formatCurrency(caseData.amount, caseData.currency)}
           </div>
         </div>
-        <div className="text-right shrink-0">
-          <div className="text-xs text-ink-faint">{FAILURE_LABELS[caseData.failure_type] || caseData.failure_type || "Unclassified"}</div>
-          <div className="text-[11px] font-mono text-ink-faint mt-0.5">
+        <div className="min-w-0 shrink-0 text-right">
+          <div className="text-xs leading-snug text-graphite/70">
+            {FAILURE_LABELS[caseData.failure_type] || caseData.failure_type || "Unclassified"}
+          </div>
+          <div className="tnum mt-0.5 text-[11px] text-graphite/70">
             {formatRelative(caseData.updated_at)}
           </div>
         </div>
@@ -42,14 +49,15 @@ export function CaseCard({ caseData }) {
         <RecoveryTraceLine activeIndex={activeIndex} finalSignal={finalSignal} compact />
       </div>
 
-      <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-4 text-ink-faint font-mono">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-t border-rule pt-3 text-xs">
+        <div className="tnum flex flex-wrap items-center gap-x-4 gap-y-1 text-graphite/70">
           <span>attempts: {caseData.previous_recovery_attempts}</span>
           <span>success rate: {Math.round(caseData.customer_success_rate * 100)}%</span>
         </div>
         {caseData.previous_recovery_action && (
-          <span className="text-signal-orange font-medium group-hover:underline">
-            {ACTION_LABELS[caseData.previous_recovery_action] || caseData.previous_recovery_action}
+          <span className="min-w-0 truncate font-medium text-electric group-hover:underline">
+            {ACTION_LABELS[caseData.previous_recovery_action] ||
+              caseData.previous_recovery_action}
           </span>
         )}
       </div>

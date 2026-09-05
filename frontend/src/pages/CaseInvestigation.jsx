@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useParams } from "react-router-dom";
-import { MousePointerClick, RefreshCw } from "lucide-react";
+import { MousePointerClick, RefreshCw, Ban } from "lucide-react";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader, Section } from "@/components/Page";
@@ -20,9 +20,52 @@ import {
 } from "@/lib/domain";
 import { formatCurrency, formatDateTime, formatPercent } from "@/lib/format";
 
+/*
+ * A case is one adjudication document, read top to bottom: what failed, what
+ * the agent proposed and why, what the control layer did with it, what actually
+ * executed, and what happened. Each reassessment is a further entry in the same
+ * document rather than a separate view, so the agent adapting across passes is
+ * something you SEE rather than something you have to reconstruct.
+ */
+
 // Actions that send the customer a clickable link -- kept in sync with
 // app/execution.py's resolve_after_click.
 const LINK_ACTIONS = ["SEND_RECOVERY_LINK", "SUGGEST_ALTERNATIVE_METHOD"];
+
+/** One label/value pair in the context band. */
+function Fact({ label, value }) {
+  return (
+    <div className="min-w-0">
+      <div className="eyebrow text-graphite/60">{label}</div>
+      <div className="tnum wrap-id mt-1 text-sm text-graphite">{value}</div>
+    </div>
+  );
+}
+
+/** The banded rule that opens each pass -- the document's equivalent of a
+ *  ledger line number. */
+function PassHeader({ index, round, overridden }) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1.5 border-t border-graphite/25 bg-paper-alt px-5 py-3 sm:px-7">
+      <span className="tnum text-sm font-semibold text-graphite">
+        /{String(index + 1).padStart(2, "0")}
+      </span>
+      <span className="eyebrow text-graphite">
+        {index === 0 ? "initial assessment" : `reassessment ${index}`}
+      </span>
+      <span className="tnum text-[11px] text-graphite/70">iteration {round.iteration}</span>
+      {overridden && (
+        <span className="eyebrow inline-flex items-center gap-1.5 rounded-xs bg-block-deep px-2 py-0.5 text-paper">
+          <Ban className="h-3 w-3 shrink-0" strokeWidth={2} />
+          overridden
+        </span>
+      )}
+      <span className="tnum ml-auto text-[11px] text-graphite/70">
+        {formatDateTime(round.decision.created_at)}
+      </span>
+    </div>
+  );
+}
 
 export default function CaseInvestigation() {
   const { paymentId } = useParams();
@@ -79,24 +122,28 @@ export default function CaseInvestigation() {
     }
   };
 
+  const overrideCount = rounds.filter(
+    (r) => r.policy?.final_action && r.policy.final_action !== r.policy.proposed_action
+  ).length;
+
   return (
     <div>
       <PageHeader
         eyebrow="Case investigation"
         title={paymentId}
-        description="Why TRACE did what it did -- every observation, decision, guardrail, and outcome, in order."
+        description="Why TRACE did what it did — every observation, decision, guardrail, and outcome, in order."
         action={
           caseData && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {canClick && (
                 <Button variant="secondary" onClick={handleClick} disabled={actionPending}>
-                  <MousePointerClick className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  <MousePointerClick className="h-3.5 w-3.5" strokeWidth={1.5} />
                   Simulate link click
                 </Button>
               )}
               {canReassess && (
                 <Button onClick={handleReassess} disabled={actionPending}>
-                  <RefreshCw className="w-3.5 h-3.5" strokeWidth={1.5} />
+                  <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />
                   Reassess now
                 </Button>
               )}
@@ -105,110 +152,171 @@ export default function CaseInvestigation() {
         }
       />
 
-      <div className="px-8 py-8 space-y-10">
+      {/* The lifecycle belongs to the desk, not the document: it reports where
+          the case has got to, while the document below is the record itself. */}
+      {caseData && (
+        <div className="border-b border-void-line px-6 pb-6 pt-6 sm:px-8">
+          <RecoveryTraceLine
+            activeIndex={activeIndex}
+            finalSignal={finalSignal}
+            reassessed={reassessed}
+          />
+        </div>
+      )}
+
+      <div className="space-y-8 px-6 py-8 sm:px-8">
         {loading && <LoadingState label="Loading case" />}
         {error && (
           <ErrorState
             title={error.status === 404 ? "Case not found" : "This case failed to load"}
-            description={error.status === 404 ? `No case exists for payment ID "${paymentId}".` : error.message}
+            description={
+              error.status === 404
+                ? `No case exists for payment ID "${paymentId}".`
+                : error.message
+            }
             onRetry={error.status === 404 ? undefined : refresh}
           />
         )}
 
         {caseData && (
           <>
-            {/* Transaction summary */}
-            <Section title="Transaction summary">
-              <div className="border border-obsidian-line bg-obsidian-soft p-6">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
-                      Amount
-                    </div>
-                    <div className="mono-tabular text-2xl font-semibold text-bone">
+            <article className="record overflow-hidden">
+              {/* ------------------------------------------------- masthead */}
+              <header className="px-5 pb-5 pt-6 sm:px-7">
+                <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+                  <span className="eyebrow text-graphite/60">/ adjudication record</span>
+                  <StatusPill signal={STATUS_SIGNAL[caseData.status] || "neutral"}>
+                    {CASE_STATUS_LABELS[caseData.status] || caseData.status}
+                  </StatusPill>
+                </div>
+
+                <div className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)]">
+                  <div className="min-w-0">
+                    <div className="eyebrow text-graphite/60">amount at risk</div>
+                    <div className="tnum wrap-id mt-1.5 text-4xl font-semibold leading-none text-graphite sm:text-5xl">
                       {formatCurrency(caseData.amount, caseData.currency)}
                     </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
-                      Failure
-                    </div>
-                    <div className="text-sm text-bone font-medium">
-                      {FAILURE_LABELS[caseData.failure_type] || caseData.failure_type || "Unclassified"}
-                    </div>
-                    <div className="text-[10px] font-mono text-ink-faint mt-0.5">
-                      {caseData.classification_method}
-                      {caseData.classification_confidence != null &&
-                        ` · ${formatPercent(caseData.classification_confidence)} confidence`}
+                    <div className="tnum wrap-id mt-2 text-[11px] text-graphite/70">
+                      {caseData.payment_id} · opened {formatDateTime(caseData.created_at)}
                     </div>
                   </div>
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
-                      Current state
-                    </div>
-                    <StatusPill signal={STATUS_SIGNAL[caseData.status] || "neutral"}>
-                      {CASE_STATUS_LABELS[caseData.status] || caseData.status}
-                    </StatusPill>
-                  </div>
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-wide text-ink-faint mb-1">
-                      Recovery worthiness
-                    </div>
-                    <div className="text-sm text-bone font-medium">
-                      {latestDecision
-                        ? DECISION_WORTHINESS[latestDecision.decision] ||
-                          latestDecision.decision.replace(/_/g, " ")
-                        : "Not yet evaluated"}
-                    </div>
-                    {latestDecision && (
-                      <div className="text-[10px] font-mono text-ink-faint mt-0.5">
-                        {formatPercent(latestDecision.confidence)} confidence
+
+                  <div className="grid min-w-0 gap-x-8 gap-y-5 sm:grid-cols-2">
+                    <div className="min-w-0">
+                      <div className="eyebrow text-graphite/60">failure</div>
+                      <div className="mt-1.5 text-sm font-semibold text-graphite">
+                        {FAILURE_LABELS[caseData.failure_type] ||
+                          caseData.failure_type ||
+                          "Unclassified"}
                       </div>
-                    )}
+                      <div className="tnum wrap-prose mt-1 text-[11px] text-graphite/70">
+                        {caseData.classification_method}
+                        {caseData.classification_confidence != null &&
+                          ` · ${formatPercent(caseData.classification_confidence)} confidence`}
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="eyebrow text-graphite/60">recovery worthiness</div>
+                      <div className="mt-1.5 text-sm font-semibold text-graphite">
+                        {latestDecision
+                          ? DECISION_WORTHINESS[latestDecision.decision] ||
+                            latestDecision.decision.replace(/_/g, " ")
+                          : "Not yet evaluated"}
+                      </div>
+                      {latestDecision && (
+                        <div className="tnum mt-1 text-[11px] text-graphite/70">
+                          {formatPercent(latestDecision.confidence)} confidence · latest pass
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
+              </header>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 pt-6 border-t border-obsidian-line text-xs font-mono text-ink-faint">
-                  <div>customer success rate: <span className="text-bone">{Math.round(caseData.customer_success_rate * 100)}%</span></div>
-                  <div>previous failures: <span className="text-bone">{caseData.previous_failures}</span></div>
-                  <div>recovery attempts: <span className="text-bone">{caseData.previous_recovery_attempts}</span></div>
-                  <div>opportunities left: <span className="text-bone">{caseData.remaining_recovery_opportunities}</span></div>
-                  <div>customer engagement: <span className="text-bone">{caseData.customer_engagement}</span></div>
-                  <div>time since failure: <span className="text-bone">{caseData.time_since_failure_minutes}m</span></div>
-                  <div>source: <span className="text-bone">{caseData.source}</span></div>
-                  <div>created: <span className="text-bone">{formatDateTime(caseData.created_at)}</span></div>
-                </div>
-
-                <RecoveryTraceLine activeIndex={activeIndex} finalSignal={finalSignal} reassessed={reassessed} />
+              {/* --------------------------------------------- context band */}
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 border-y border-rule bg-paper-alt px-5 py-4 sm:grid-cols-4 sm:px-7">
+                <Fact
+                  label="customer success rate"
+                  value={`${Math.round(caseData.customer_success_rate * 100)}%`}
+                />
+                <Fact label="previous failures" value={caseData.previous_failures} />
+                <Fact label="recovery attempts" value={caseData.previous_recovery_attempts} />
+                <Fact
+                  label="opportunities left"
+                  value={caseData.remaining_recovery_opportunities}
+                />
+                <Fact label="customer engagement" value={caseData.customer_engagement} />
+                <Fact
+                  label="time since failure"
+                  value={`${caseData.time_since_failure_minutes}m`}
+                />
+                <Fact label="source" value={caseData.source} />
+                <Fact label="passes recorded" value={rounds.length} />
               </div>
-            </Section>
 
-            {/* Decision rounds -- reasoning, policy, action, outcome grouped per reassessment pass */}
-            <Section title={rounds.length > 1 ? "Decision rounds (reassessment history)" : "TRACE decision"}>
-              <div className="space-y-6">
-                {rounds.map((round, i) => (
-                  <div key={i}>
-                    {rounds.length > 1 && (
-                      <div className="text-[10px] font-mono uppercase tracking-wide text-signal-amber mb-2">
-                        {i === 0 ? "Initial pass" : `Reassessment ${i}`} · iteration {round.iteration}
-                      </div>
-                    )}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* ------------------------------------------------ the passes */}
+              {rounds.length === 0 ? (
+                <div className="px-5 py-8 text-sm text-graphite/70 sm:px-7">
+                  No adjudication pass has run against this case yet.
+                </div>
+              ) : (
+                rounds.map((round, i) => {
+                  const overridden =
+                    !!round.policy?.final_action &&
+                    round.policy.final_action !== round.policy.proposed_action;
+                  return (
+                    <section key={i}>
+                      <PassHeader index={i} round={round} overridden={overridden} />
                       <DecisionPanel decision={round.decision} />
                       <PolicyCheckPanel policy={round.policy} />
                       {round.execution && <ExecutionPanel execution={round.execution} />}
                       {round.outcome && <OutcomePanel outcome={round.outcome} />}
+                    </section>
+                  );
+                })
+              )}
+
+              {/* ----------------------------------------------- settlement */}
+              <footer className="border-t border-graphite/25 bg-paper-alt px-5 py-5 sm:px-7">
+                <div className="rule-double flex flex-wrap items-baseline justify-between gap-x-8 gap-y-3 pt-3">
+                  <div className="min-w-0">
+                    <div className="eyebrow text-graphite/70">case settled as</div>
+                    <div className="mt-1.5 text-lg font-semibold text-graphite">
+                      {CASE_STATUS_LABELS[caseData.status] || caseData.status}
+                      {overrideCount > 0 && (
+                        <span className="ml-3 text-xs font-normal text-block">
+                          {overrideCount} policy override{overrideCount > 1 ? "s" : ""} on record
+                        </span>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
-            </Section>
+                  <div className="min-w-0 text-right">
+                    <div className="eyebrow text-graphite/70">revenue recovered</div>
+                    <div
+                      className={`tnum wrap-id mt-1.5 text-2xl font-semibold ${
+                        caseData.revenue_recovered ? "text-approve-deep" : "text-graphite/70"
+                      }`}
+                    >
+                      {caseData.revenue_recovered
+                        ? formatCurrency(caseData.revenue_recovered, caseData.currency)
+                        : "—"}
+                    </div>
+                    {caseData.revenue_recovered != null && (
+                      <div className="mt-1 text-[11px] text-graphite/70">
+                        {caseData.revenue_recovered_simulated
+                          ? "Simulated financial outcome"
+                          : "Real event"}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </footer>
+            </article>
 
-            {/* Recovery timeline */}
-            <Section title="Recovery timeline">
-              <div className="border border-obsidian-line bg-obsidian-soft p-6">
-                <Timeline entries={caseData.audit_log} />
-              </div>
+            {/* The audit trail is a second document: the same events, but as
+                the immutable log rather than the reasoned record. */}
+            <Section title="Audit trail">
+              <Timeline entries={caseData.audit_log} />
             </Section>
           </>
         )}

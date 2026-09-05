@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Zap, ShieldAlert, PlusCircle } from "lucide-react";
+import { Zap, ShieldAlert, PlusCircle, ArrowRight } from "lucide-react";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader, Section } from "@/components/Page";
@@ -12,6 +12,30 @@ import { RunSelector } from "@/components/RunSelector";
 import { SimulateFailureDialog } from "@/components/SimulateFailureDialog";
 import { EmptyState, ErrorState, LoadingState } from "@/components/States";
 import { formatCompactCurrency, formatPercent } from "@/lib/format";
+
+/*
+ * The desk, first thing in the morning: two figures that matter, everything
+ * else deliberately quieter. Revenue at risk and revenue recovered are set as
+ * full cream records; the supporting statistics share one banded record below
+ * them, so the hierarchy is carried by surface and scale rather than by colour.
+ */
+
+/** A run banner on the dark ground -- chrome reporting on the app, not a record. */
+function RunNotice({ tone = "neutral", children }) {
+  const tones = {
+    busy: "border-electric-bright/35 bg-electric-bright/8 text-electric-bright",
+    done: "border-approve-bright/35 bg-approve-bright/8 text-approve-bright",
+  };
+  return (
+    <div
+      className={`flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xs border px-4 py-2.5 text-[11px] leading-relaxed ${
+        tones[tone] || "border-void-line text-cream-dim"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
 
 export default function CommandCenter() {
   const [running, setRunning] = useState(false);
@@ -88,6 +112,13 @@ export default function CommandCenter() {
     }
   };
 
+  const inProgress = overview
+    ? overview.total_failed_payments -
+      overview.transactions_recovered -
+      overview.cases_stopped -
+      overview.cases_escalated
+    : 0;
+
   return (
     <div>
       <PageHeader
@@ -95,30 +126,33 @@ export default function CommandCenter() {
         title="Revenue recovery, live"
         description="How much revenue is at risk, what TRACE has recovered, and which cases need a human."
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <RunSelector
               value={selectedRun}
               onChange={setSelectedRun}
               refreshToken={runsToken}
             />
             <Button onClick={() => setSimulateOpen(true)}>
-              <PlusCircle className="w-3.5 h-3.5" strokeWidth={1.5} />
+              <PlusCircle className="h-3.5 w-3.5" strokeWidth={1.5} />
               Simulate failed payment
             </Button>
             <Button variant="secondary" onClick={handleRunEvaluation} disabled={running}>
-              <Zap className="w-3.5 h-3.5" strokeWidth={1.5} />
+              <Zap className="h-3.5 w-3.5" strokeWidth={1.5} />
               {running ? "Running evaluation…" : "Run new evaluation"}
             </Button>
           </div>
         }
       />
 
-      <div className="px-8 py-8 space-y-10">
+      <div className="space-y-10 px-6 py-8 sm:px-8">
         {running && (
-          <div className="text-[11px] font-mono text-signal-orange border border-signal-orange/30 bg-signal-orange-dim/5 px-4 py-2">
-            Running a 300-case evaluation against the baseline — this can take up to a minute.
-            The figures below refresh automatically as it progresses.
-          </div>
+          <RunNotice tone="busy">
+            <span className="eyebrow">/ evaluation running</span>
+            <span className="text-cream-dim">
+              A 300-case batch is being scored against the baseline — this can take up to a minute.
+              The figures below refresh as it progresses.
+            </span>
+          </RunNotice>
         )}
         {runError && (
           <ErrorState
@@ -128,21 +162,22 @@ export default function CommandCenter() {
           />
         )}
         {!running && lastRun && (
-          <div className="text-[11px] font-mono text-signal-mint border border-signal-mint/30 bg-signal-mint-dim/10 px-4 py-2 flex flex-wrap gap-x-5 gap-y-1">
-            <span>Run complete</span>
-            <span className="text-ink-faint">
-              id <span className="text-bone">{String(lastRun.run_id).slice(0, 8)}</span>
+          <RunNotice tone="done">
+            <span className="eyebrow">/ run complete</span>
+            <span className="tnum text-cream-dim">
+              id <span className="text-cream">{String(lastRun.run_id).slice(0, 8)}</span>
             </span>
-            <span className="text-ink-faint">
-              seed <span className="text-bone">{lastRun.seed}</span>
+            <span className="tnum text-cream-dim">
+              seed <span className="text-cream">{lastRun.seed}</span>
             </span>
-            <span className="text-ink-faint">
+            <span className="tnum text-cream-dim">
               recovered{" "}
-              <span className="text-bone">
-                {lastRun.results?.TRACE?.transactions_recovered} / {lastRun.results?.TRACE?.total_failed_payments}
+              <span className="text-cream">
+                {lastRun.results?.TRACE?.transactions_recovered} /{" "}
+                {lastRun.results?.TRACE?.total_failed_payments}
               </span>
             </span>
-          </div>
+          </RunNotice>
         )}
 
         {loading && <LoadingState label="Loading command center" />}
@@ -160,39 +195,49 @@ export default function CommandCenter() {
           />
         )}
 
-        {error && !noRunYet && (
-          <ErrorState description={error.message} onRetry={refresh} />
-        )}
+        {error && !noRunYet && <ErrorState description={error.message} onRetry={refresh} />}
 
         {overview && (
           <>
-            {/* Hero + supporting KPIs */}
-            <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-10">
-              <KpiBlock
-                hero
-                label="Revenue at risk"
-                value={formatCompactCurrency(overview.revenue_at_risk)}
-                signal="orange"
-                sublabel={`${overview.total_failed_payments} failed payments in current run`}
-              />
-              <div className="grid grid-cols-2 gap-6 content-center">
+            {/* ------------------------------------------- the two headlines */}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="record p-6 sm:p-7">
                 <KpiBlock
+                  hero
+                  label="Revenue at risk"
+                  value={formatCompactCurrency(overview.revenue_at_risk)}
+                  sublabel={`${overview.total_failed_payments} failed payments in this run`}
+                />
+              </div>
+              <div className="record p-6 sm:p-7">
+                <KpiBlock
+                  hero
                   label="Revenue recovered"
                   value={formatCompactCurrency(overview.revenue_recovered)}
                   signal="mint"
-                  sublabel="Simulated outcome"
+                  sublabel={`${overview.transactions_recovered} of ${overview.total_failed_payments} transactions · simulated financial outcome`}
                 />
+              </div>
+            </div>
+
+            {/* --------------------------------- supporting figures, quieter */}
+            <div className="record grid divide-y divide-rule sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+              <div className="p-5">
                 <KpiBlock
                   label="Recovery rate"
                   value={formatPercent(overview.recovery_rate)}
-                  sublabel={`${overview.recovery_attempts} attempts made`}
+                  sublabel={`${overview.recovery_attempts} recovery actions taken`}
                 />
+              </div>
+              <div className="p-5">
                 <KpiBlock
                   label="Cases requiring review"
                   value={overview.cases_escalated}
                   signal={overview.cases_escalated > 0 ? "amber" : undefined}
                   sublabel="Escalated for human judgment"
                 />
+              </div>
+              <div className="p-5">
                 <KpiBlock
                   label="Recovery efficiency"
                   value={formatCompactCurrency(overview.recovery_value_per_intervention)}
@@ -201,17 +246,12 @@ export default function CommandCenter() {
               </div>
             </div>
 
-            {/* Live recovery flow */}
+            {/* --------------------------------------------- live case flow */}
             <Section title="Live recovery flow">
-              <div className="border border-obsidian-line bg-obsidian-soft p-6 h-56">
+              <div className="record h-56 p-6">
                 <RecoveryFlow
                   total={overview.total_failed_payments}
-                  open={
-                    overview.total_failed_payments -
-                    overview.transactions_recovered -
-                    overview.cases_stopped -
-                    overview.cases_escalated
-                  }
+                  open={inProgress}
                   recovered={overview.transactions_recovered}
                   stopped={overview.cases_stopped}
                   escalated={overview.cases_escalated}
@@ -219,20 +259,21 @@ export default function CommandCenter() {
               </div>
             </Section>
 
-            {/* Cases needing attention */}
+            {/* ------------------------------------------ needs a human now */}
             <Section
               title="Cases needing attention"
               action={
                 <Link
                   to={`/cases?status=ESCALATED${selectedRun ? `&eval_run_id=${selectedRun}` : ""}`}
-                  className="text-[11px] font-mono text-signal-orange hover:underline"
+                  className="eyebrow inline-flex items-center gap-1.5 text-electric-bright hover:underline"
                 >
-                  View all escalated →
+                  view all escalated
+                  <ArrowRight className="h-3 w-3" strokeWidth={2} />
                 </Link>
               }
             >
               {attentionCases && attentionCases.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {attentionCases.map((c) => (
                     <CaseCard key={c.payment_id} caseData={c} />
                   ))}

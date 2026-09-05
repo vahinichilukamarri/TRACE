@@ -1,27 +1,34 @@
 @import "tailwindcss";
 
 @theme {
-  /* ---- Foundation ---- */
-  --color-obsidian: #111111;
-  --color-obsidian-soft: #1A1A1A;
-  --color-obsidian-line: #2A2A28;
-  --color-bone: #F5F2EA;
-  --color-bone-dim: #EFEBE1;
-  --color-mist: #E8E5DD;
-  --color-mist-line: #D8D4C8;
-  --color-ink: #111111;
-  --color-ink-soft: #4A4844;
-  --color-ink-faint: #8A8781;
+  /* ---- Legacy aliases ----
+     The app was built on an earlier palette. Rather than leave two systems
+     side by side, every old name now points at the shared one below, so any
+     class not yet rewritten still lands on the current design rather than on
+     a colour from the previous product. */
+  --color-obsidian: #0E0B08;
+  --color-obsidian-soft: #16110C;
+  --color-obsidian-line: #2C2318;
+  --color-bone: #F0E7D6;
+  --color-bone-dim: #E3D8C4;
+  --color-mist: #EBE3D2;
+  --color-mist-line: #D6CBB4;
+  --color-ink: #171009;
+  --color-ink-soft: #B7A88F;
+  --color-ink-faint: #8C7F6B;
 
-  /* ---- Signal (semantic) ---- */
-  --color-signal-orange: #FF6B35;
-  --color-signal-orange-dim: #FFE4D6;
-  --color-signal-mint: #34D399;
-  --color-signal-mint-dim: #D8F5E8;
-  --color-signal-amber: #F4B942;
-  --color-signal-amber-dim: #FCEECB;
-  --color-signal-red: #EF4444;
-  --color-signal-red-dim: #FBDCDC;
+  /* ---- Signal aliases ----
+     Names kept so STATUS_SIGNAL / POLICY_SIGNAL / OUTCOME_SIGNAL mappings and
+     every component reading them keep working untouched. Only the values move:
+     orange -> the electric accent, mint -> approve, amber -> hold, red -> block. */
+  --color-signal-orange: #2F30FF;
+  --color-signal-orange-dim: #E2E2FF;
+  --color-signal-mint: #0E7C55;
+  --color-signal-mint-dim: #E4F3EB;
+  --color-signal-amber: #A87708;
+  --color-signal-amber-dim: #FBF0D8;
+  --color-signal-red: #B3261E;
+  --color-signal-red-dim: #FBEAE6;
 
   /* ---- Ledger (light system: settlement statement, not dashboard) ----
      Six base values. Muted text is DERIVED via opacity (text-graphite/55),
@@ -57,6 +64,15 @@
   --color-hold: #A87708;
   --color-hold-soft: #FBF0D8;
   --color-hold-deep: #6F4E04;
+
+  /* The same three verdicts, lifted for the dark chrome. The values above are
+     drawn for ink on cream and drop to ~3:1 on the near-black ground, which is
+     under the floor for the small type the shell uses. Same meanings, same
+     names, raised luminance. */
+  --color-approve-bright: #3FBE8C;
+  --color-block-bright: #F0665C;
+  --color-hold-bright: #E0A93B;
+  --color-electric-bright: #7A7BFF;
 
   /* The dark bands, aliased so the interactive panels track the desk palette. */
   --color-console: #0E0B08;
@@ -152,11 +168,7 @@ body:has(.landing-page) *::-webkit-scrollbar-thumb {
   letter-spacing: -0.01em;
 }
 
-/* Focus visibility -- accessibility floor, technical console style */
-:focus-visible {
-  outline: 2px solid var(--color-signal-orange);
-  outline-offset: 2px;
-}
+
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -174,10 +186,17 @@ body:has(.landing-page) *::-webkit-scrollbar-thumb {
   font-feature-settings: "tnum" 1;
 }
 
-/* Visible keyboard focus everywhere, including on the light ledger ground. */
+/* Visible keyboard focus everywhere. The accent reads on both grounds, so one
+   rule covers the dark chrome and the cream documents; cream surfaces darken it
+   so it does not vibrate against the paper. */
 :focus-visible {
-  outline: 2px solid var(--color-graphite);
+  outline: 2px solid var(--color-electric);
   outline-offset: 2px;
+  border-radius: 2px;
+}
+.record :focus-visible,
+.record-hi :focus-visible {
+  outline-color: var(--color-electric-deep);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -345,6 +364,99 @@ body:has(.landing-page) *::-webkit-scrollbar-thumb {
   .card-out-right,
   .card-in-right,
   .card-in-left {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+
+/* ---- Shared surfaces ------------------------------------------------------
+   The metaphor, as two class names: records are cream documents resting on a
+   warm near-black desk. Used by the app shell and the landing page alike so
+   the two read as one product. */
+
+/* A data record: case, table, decision panel, chart. */
+.record {
+  background: var(--color-paper);
+  color: var(--color-graphite);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    0 20px 44px -26px rgba(0, 0, 0, 0.85);
+}
+
+/* A fresher sheet, for a panel nested inside a record. */
+.record-hi {
+  background: var(--color-paper-hi);
+  color: var(--color-graphite);
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+}
+
+/* The ledger's mark for a settled total or a verdict. */
+.rule-double {
+  border-top: 3px double var(--color-graphite);
+}
+
+/* Long free text -- model reasoning, policy strings, SMTP errors -- must wrap
+   rather than push a card wider than its column. */
+.wrap-prose {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Identifiers wrap at any character: a payment ID has no spaces to break on. */
+.wrap-id {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+
+/* ---- Race chart -----------------------------------------------------------
+   The two frontier lines draw themselves left to right so the reader watches
+   one pull away from the other. pathLength="1" normalises the dash maths, so
+   the same rule works whatever the path's real length is. Every keyframe ends
+   on the finished state, so cutting the motion leaves a complete chart. */
+@keyframes raceDraw {
+  from { stroke-dashoffset: 1; }
+  to   { stroke-dashoffset: 0; }
+}
+@keyframes raceReveal {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.race-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: raceDraw 2.2s cubic-bezier(0.33, 0.9, 0.5, 1) forwards;
+}
+.race-reveal {
+  animation: raceReveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: 2.1s;
+}
+
+/* A bar that grows to the width it is meant to hold. The final width is set
+   inline, so a cut animation still lands on the true value. */
+@keyframes barGrow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.bar-grow {
+  transform-origin: left center;
+  animation: barGrow 1.1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .race-line {
+    animation: none !important;
+    stroke-dashoffset: 0 !important;
+  }
+  .race-reveal,
+  .bar-grow {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;

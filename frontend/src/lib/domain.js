@@ -103,9 +103,14 @@ export const SystemType = {
   BASELINE: "BASELINE",
 };
 
-// ---- Semantic color mapping (Signal Intelligence system) ----
-// orange = TRACE activity / in-progress, mint = success/recovered,
-// amber = waiting / review / uncertainty, red = failed / blocked / stopped.
+// ---- Semantic color mapping ----
+// The signal NAMES and every mapping below are unchanged on purpose: component
+// logic keys off them and a rename would be a behaviour change. Only the values
+// they resolve to moved, onto the shared design tokens:
+//   orange = TRACE activity / in-progress  -> electric accent
+//   mint   = success / recovered / approved -> approve
+//   amber  = waiting / review / uncertainty -> hold
+//   red    = failed / blocked / stopped     -> block
 
 export const STATUS_SIGNAL = {
   OPEN: "orange",
@@ -138,6 +143,11 @@ export const DECISION_SIGNAL = {
 // Tailwind class groups per signal name -- keeps color usage centralized & semantic only.
 // NOTE: every class string here is written out in full (no runtime concatenation of
 // partial utility + opacity modifier) so Tailwind's source scanner can find it.
+//
+// The base group is drawn for CREAM record surfaces, where nearly all signal-
+// coloured content lives. `onDark` is the same meaning raised in luminance for
+// the near-black chrome -- the cream values sit near 3:1 there, under the floor
+// for the small type the shell uses. Read `onDark` only on a dark ground.
 export const SIGNAL_CLASSES = {
   orange: {
     text: "text-signal-orange",
@@ -145,26 +155,29 @@ export const SIGNAL_CLASSES = {
     dim: "bg-signal-orange-dim",
     border: "border-signal-orange",
     borderMuted: "border-signal-orange/40",
-    dimMuted: "bg-signal-orange-dim/20",
+    dimMuted: "bg-signal-orange-dim/50",
     dot: "bg-signal-orange",
+    onDark: { text: "text-electric-bright", dot: "bg-electric-bright", border: "border-electric-bright/40" },
   },
   mint: {
-    text: "text-signal-mint",
+    text: "text-approve-deep",
     bg: "bg-signal-mint",
     dim: "bg-signal-mint-dim",
     border: "border-signal-mint",
     borderMuted: "border-signal-mint/40",
-    dimMuted: "bg-signal-mint-dim/20",
+    dimMuted: "bg-signal-mint-dim/50",
     dot: "bg-signal-mint",
+    onDark: { text: "text-approve-bright", dot: "bg-approve-bright", border: "border-approve-bright/40" },
   },
   amber: {
-    text: "text-signal-amber",
+    text: "text-hold-deep",
     bg: "bg-signal-amber",
     dim: "bg-signal-amber-dim",
     border: "border-signal-amber",
     borderMuted: "border-signal-amber/40",
-    dimMuted: "bg-signal-amber-dim/20",
+    dimMuted: "bg-signal-amber-dim/50",
     dot: "bg-signal-amber",
+    onDark: { text: "text-hold-bright", dot: "bg-hold-bright", border: "border-hold-bright/40" },
   },
   red: {
     text: "text-signal-red",
@@ -172,17 +185,19 @@ export const SIGNAL_CLASSES = {
     dim: "bg-signal-red-dim",
     border: "border-signal-red",
     borderMuted: "border-signal-red/40",
-    dimMuted: "bg-signal-red-dim/20",
+    dimMuted: "bg-signal-red-dim/50",
     dot: "bg-signal-red",
+    onDark: { text: "text-block-bright", dot: "bg-block-bright", border: "border-block-bright/40" },
   },
   neutral: {
-    text: "text-ink-faint",
-    bg: "bg-ink-faint",
-    dim: "bg-mist",
-    border: "border-mist-line",
-    borderMuted: "border-mist-line/60",
-    dimMuted: "bg-mist/20",
-    dot: "bg-ink-faint",
+    text: "text-graphite/70",
+    bg: "bg-graphite/30",
+    dim: "bg-paper-alt",
+    border: "border-rule",
+    borderMuted: "border-rule",
+    dimMuted: "bg-paper-alt",
+    dot: "bg-graphite/40",
+    onDark: { text: "text-cream-dim", dot: "bg-cream-dim/60", border: "border-void-line" },
   },
 };
 

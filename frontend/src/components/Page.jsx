@@ -1,14 +1,15 @@
+/* Page chrome lives on the desk: slash eyebrow, display heading, hairline. */
 export function PageHeader({ eyebrow, title, description, action }) {
   return (
-    <div className="flex items-start justify-between gap-6 px-8 pt-8 pb-6 border-b border-obsidian-line">
-      <div>
-        {eyebrow && (
-          <div className="text-[11px] font-mono uppercase tracking-[0.14em] text-signal-orange mb-1.5">
-            {eyebrow}
-          </div>
+    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4 border-b border-void-line px-6 pb-6 pt-8 sm:px-8">
+      <div className="min-w-0">
+        {/* The accent at full saturation is 2.8:1 on the near-black ground --
+            under the floor for 11px type. The lifted variant is the same hue. */}
+        {eyebrow && <div className="eyebrow mb-2 text-electric-bright">/ {eyebrow}</div>}
+        <h1 className="display text-3xl leading-none text-cream sm:text-4xl">{title}</h1>
+        {description && (
+          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-cream-dim">{description}</p>
         )}
-        <h1 className="text-2xl font-semibold tracking-tight text-bone">{title}</h1>
-        {description && <p className="text-sm text-ink-faint mt-1.5 max-w-2xl">{description}</p>}
       </div>
       {action}
     </div>
@@ -19,10 +20,8 @@ export function Section({ title, action, children, className = "" }) {
   return (
     <section className={className}>
       {(title || action) && (
-        <div className="flex items-center justify-between mb-3">
-          {title && (
-            <h2 className="text-xs font-medium uppercase tracking-[0.1em] text-ink-faint">{title}</h2>
-          )}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          {title && <h2 className="eyebrow text-cream-dim/70">/ {title}</h2>}
           {action}
         </div>
       )}

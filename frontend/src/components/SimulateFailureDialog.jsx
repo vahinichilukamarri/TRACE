@@ -106,10 +106,11 @@ const PRESETS = [
   },
 ];
 
-const LABEL = "block text-[10px] font-mono uppercase tracking-[0.1em] text-ink-faint mb-1.5";
+/* Presentational only -- the dialog is chrome, so it stays on the dark ground. */
+const LABEL = "eyebrow block text-cream-dim/70 mb-1.5";
 const FIELD =
-  "w-full bg-obsidian border border-obsidian-line px-2.5 py-1.5 text-sm text-bone " +
-  "mono-tabular outline-none focus:border-signal-orange placeholder:text-ink-faint";
+  "w-full rounded-xs bg-void border border-void-line px-2.5 py-1.5 text-sm text-cream " +
+  "tnum outline-none transition-colors focus:border-electric placeholder:font-sans placeholder:text-cream-dim/50";
 
 export function SimulateFailureDialog({ onClose }) {
   const navigate = useNavigate();
@@ -518,7 +519,7 @@ export function SimulateFailureDialog({ onClose }) {
                 />
                 <div>
                   <div className="text-xs font-medium text-signal-red">Ingest failed</div>
-                  <p className="mt-1 font-mono text-[11px] text-ink-faint">{error}</p>
+                  <p className="tnum wrap-id mt-1 text-[11px] text-cream-dim">{error}</p>
                 </div>
               </div>
             </div>
