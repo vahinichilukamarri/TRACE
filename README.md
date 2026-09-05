@@ -1,171 +1,88 @@
 # TRACE — Transaction Recovery Agent with Contextual Evaluation
 
-A bounded AI agent for **failed-payment revenue recovery**. TRACE decides whether a
-failed transaction is worth pursuing, picks the single best next intervention,
-executes it, observes the outcome, adapts, and knows when to stop — and proves its
-value against a static baseline workflow on the same data.
+**Razorpay AI Buildathon — Track 03: AI Revenue Recovery**
 
-The guiding principle is **"maximize intelligent effort, not attempt count."** A dumb
-retry loop burns money on transactions that were never going to recover. TRACE spends
-effort where the expected value justifies it.
+**[Live app →](https://trace-xi-nine.vercel.app)** · Backend API: [trace-backend-4uu2.onrender.com](https://trace-backend-4uu2.onrender.com)
 
-> **Agent decides. Policy controls.**
-> The agent proposes. A deterministic, LLM-independent policy layer disposes. Nothing
-> executes without passing it, and every step is written to an immutable audit trail.
+A failed payment is not a lost customer — most of the time the person still wants to
+buy. TRACE is a bounded AI agent that looks at a failed transaction, decides whether
+recovering it is actually worth the effort, picks the single best next action,
+executes it, watches what happens, adapts, and knows when to stop. Everything it
+proposes passes through a deterministic policy layer that can override it before
+anything executes, and every step is written to an immutable audit trail.
+
+To prove it isn't just a good idea, TRACE runs the same 300 synthetic failed payments
+through itself and through a static "retry → wait → remind → stop" baseline, on
+identical data, and reports the difference.
 
 ---
 
 ## Table of contents
 
-1. [Repository layout](#1-repository-layout)
-2. [Quickstart](#2-quickstart)
-3. [How the recovery loop works](#3-how-the-recovery-loop-works)
-4. [Core domain model](#4-core-domain-model)
-5. [The agent](#5-the-agent)
-6. [The policy & control layer](#6-the-policy--control-layer)
-7. [Execution, email, and real-vs-simulated](#7-execution-email-and-real-vs-simulated)
-8. [Audit trail & idempotency](#8-audit-trail--idempotency)
-9. [Batch evaluation harness](#9-batch-evaluation-harness)
-10. [Metrics](#10-metrics)
-11. [API reference](#11-api-reference)
-12. [Frontend](#12-frontend)
-13. [Configuration](#13-configuration)
-14. [Testing](#14-testing)
-15. [Operational notes](#15-operational-notes)
-16. [Known limitations & open decisions](#16-known-limitations--open-decisions)
+1. [The core thesis](#1-the-core-thesis)
+2. [Agent decides. Policy controls.](#2-agent-decides-policy-controls)
+3. [Dual-engine design: deterministic benchmark, routed live path](#3-dual-engine-design-deterministic-benchmark-routed-live-path)
+4. [The bounded action space](#4-the-bounded-action-space)
+5. [Deployed](#5-deployed)
+6. [Quickstart](#6-quickstart)
+7. [Measured results](#7-measured-results)
+8. [Razorpay Track 03 alignment](#8-razorpay-track-03-alignment)
+9. [Known limitations](#9-known-limitations)
 
 ---
 
-## 1. Repository layout
+## 1. The core thesis
 
-```
-trace/
-├── backend/                  FastAPI + SQLAlchemy + SQLite service
-│   ├── app/
-│   │   ├── main.py           App factory, CORS, router registration
-│   │   ├── config.py         All settings, env-overridable
-│   │   ├── database.py       Engine, session, SQLite WAL pragmas, init_db
-│   │   ├── models.py         ORM models (the whole persistence schema)
-│   │   ├── schemas.py        Pydantic request/response contracts
-│   │   ├── enums.py          Bounded vocabularies (actions, statuses, ...)
-│   │   ├── classification.py Failure message -> FailureType
-│   │   ├── agent.py          Decision engines (heuristic + LLM) & EV economics
-│   │   ├── policy.py         Deterministic guardrails
-│   │   ├── execution.py      Side effects (email, simulated payment outcomes)
-│   │   ├── engine.py         Orchestration: one iteration, and the bounded loop
-│   │   ├── audit.py          Append-only event log helper
-│   │   ├── idempotency.py    One case per payment_id, ever
-│   │   ├── baseline.py       The static workflow TRACE is measured against
-│   │   ├── evaluation/       Batch harness + metrics
-│   │   ├── simulation/       Synthetic dataset + hidden outcome model
-│   │   └── routers/          cases, evaluation, dashboard, policy_info
-│   ├── tests/                pytest suite (42 tests)
-│   └── requirements.txt
-│
-└── frontend/                 React 19 + Vite + Tailwind v4 + Recharts
-    └── src/
-        ├── pages/            Command Center, Recovery Cases, Case
-        │                     Investigation, Performance, Policy & Control
-        ├── components/       Design-system building blocks
-        ├── lib/              Domain constants, formatting, case grouping
-        ├── hooks/useApi.js   Tiny fetch/loading/error hook
-        └── api/client.js     API wrapper
-```
+It would be easy to assume TRACE wins by trying less. It doesn't — on the 300-case
+benchmark it takes **more** recovery actions than the baseline (310 vs 249). The
+thesis isn't attempt count, it's **where the effort goes**:
 
----
+| | TRACE | BASELINE |
+|---|---|---|
+| Cases correctly never pursued at all | **98** | 43 |
+| Recovery value per intervention | **₹873.42** | ₹766.20 |
 
-## 2. Quickstart
+TRACE spends more of its 310 actions on cases actually worth chasing, and declines to
+touch **98 of 300** cases up front — more than double the baseline's 43 — because a
+contextual read of value, history, and failure type says the expected return doesn't
+justify the cost. A dumb workflow chases a ₹200 transaction with four prior failures
+exactly as hard as it chases a ₹95,000 transaction that has never failed before.
+TRACE doesn't. The clearest evidence of judgment is the work correctly left undone,
+not the total number of things attempted. Full numbers: [§7](#7-measured-results).
 
-### Backend
+## 2. Agent decides. Policy controls.
 
-```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
+The agent (`app/agent.py`) can only ever pick from a fixed six-action space
+(`app/enums.py::ActionType`) and never executes anything itself. Every proposal
+passes through `app/policy.py` — a **9-rule, 100% deterministic control layer with
+zero dependency on the LLM or the heuristic engine** — before `app/execution.py` is
+allowed to act. Confidence too low, a high-value transaction proposed for closure on
+the first attempt, an expired recovery window, an attempt ceiling: the policy layer
+catches all of it regardless of which engine made the proposal. That separation is
+what makes TRACE's safety properties auditable independently of the AI component. The
+full 9-rule table, with current thresholds, is in [backend/README.md](backend/README.md#4-the-policy--control-layer).
 
-On macOS/Linux use `source venv/bin/activate` instead.
+## 3. Dual-engine design: deterministic benchmark, routed live path
 
-Interactive API docs: <http://localhost:8000/docs>
+TRACE has two decision engines behind one interface — a deterministic `HEURISTIC`
+scorer and a real LLM call (`Groq`) — plus a `ROUTED` dispatch mode that runs the
+heuristic on every case (free, instant) and escalates to the LLM only when one of four
+signals says the heuristic's answer isn't trustworthy enough on its own: an uncertain
+failure classification, a top-two candidate action too close to call, a high-value
+transaction with a failed prior attempt, or case history the heuristic's fit table
+structurally can't represent. Full trigger definitions and thresholds are in
+[backend/README.md](backend/README.md#3-the-two-engines-and-routeds-four-triggers).
 
-The SQLite database (`backend/trace.db`) is created automatically on first start.
-There is no migration step — but see [Operational notes](#15-operational-notes) if you
-change the schema.
+**The 300-case benchmark is deliberately locked to `HEURISTIC` and never touches the
+network** — that's the only way a byte-reproducible comparison against the baseline is
+possible, and a batch run that fired hundreds of live LLM calls would be slow, billed,
+and non-reproducible by construction. **The deployed live path runs `ROUTED`** — every
+individually ingested case gets a per-case decision on whether it needs real
+reasoning, which is where the routing behaviour and the LLM's actual answers become
+visible in the demo. See [backend/README.md §5](backend/README.md#5-the-evaluation-harness-and-why-its-force-deterministic)
+for the specific bug this distinction had to survive.
 
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Opens on <http://localhost:5173> and expects the backend on `http://localhost:8000`
-(override with `VITE_API_BASE_URL` in `frontend/.env`).
-
-### First run
-
-1. Open the **Command Center**.
-2. Click **Run new evaluation** — this generates 300 synthetic failed payments and
-   runs each one through *both* TRACE and the static baseline (~10-15 s).
-3. Explore **Performance** for the head-to-head comparison, and **Recovery Cases ->
-   Case Investigation** to see exactly why TRACE did what it did on any single case.
-
----
-
-## 3. How the recovery loop works
-
-```
-Payment failure event
-        │
-        ▼
-  Idempotency check ──(duplicate)──► log duplicate, return existing case
-        │ (new)
-        ▼
-  Classification            structured code -> LLM (live only) -> keyword fallback
-        │
-        ▼
-  Agent decision            "Worth pursuing? Which of the 6 actions?"
-        │                   + expected value / cost / net expected value
-        ▼
-  Policy check              APPROVED · BLOCKED · FLAGGED_FOR_REVIEW
-        │
-        ▼
-  Execution                 real: email + logging
-        │                   simulated: payment completion (always labeled)
-        ▼
-  Outcome observed
-        │
-        ▼
-  State advanced            time elapses, attempts spent, opportunities decrement
-        │
-        ▼
-  Reassess (bounded) ──► RECOVERED · STOPPED · ESCALATED · EXPIRED
-        │
-        ▼
-  Audit trail               every step above, permanently, in order
-```
-
-`app/engine.py` owns this orchestration and is shared by **both** the live API and the
-batch harness, so they cannot drift apart:
-
-- `run_iteration()` — exactly one DECIDE -> POLICY -> EXECUTE step.
-- `advance_case_state()` — moves the case forward so the *next* pass sees genuinely
-  different context (this is what makes the loop converge).
-- `run_to_completion()` — the batch loop: iterate until terminal or the iteration
-  bound, then force `STOP_RECOVERY`.
-
-The live route `POST /cases/{id}/reassess` calls `run_iteration()` +
-`advance_case_state()` and enforces the same `MAX_REASSESSMENT_ITERATIONS` bound, so a
-live case converges exactly like a batch one.
-
----
-
-## 4. Core domain model
-
-### Bounded action space (6, and only 6)
+## 4. The bounded action space
 
 | Action | Meaning | Direct recovery? |
 |---|---|---|
@@ -176,406 +93,123 @@ live case converges exactly like a batch one.
 | `ESCALATE_FOR_REVIEW` | Route to a human | no |
 | `STOP_RECOVERY` | Give up, close the case | no |
 
-The agent can never invent an action, change an amount, move real money, or contact a
-customer outside these paths.
+Nothing else exists. TRACE cannot invent an action, change an amount, move real
+money, or contact a customer outside these six paths — the worst case is bounded by
+construction, not by hoping the model behaves.
 
-### Failure types
+## 5. Deployed
 
-`BANK_TIMEOUT` · `CARD_DECLINED` · `INSUFFICIENT_FUNDS` · `AUTH_FAILURE` ·
-`PROCESSING_ERROR` (the fallback bucket)
-
-### Case statuses
-
-`OPEN` -> `RECOVERED` | `STOPPED` | `ESCALATED`
-
-`EXPIRED` also exists in the enum and is treated as terminal by the engine and policy
-layer, but nothing currently assigns it — window expiry resolves to `STOPPED` via the
-forced-action path instead.
-
-### Persistence schema
-
-| Table | Purpose |
+| | URL |
 |---|---|
-| `recovery_cases` | The single mutable current state per `payment_id` |
-| `agent_decisions` | Every decision, with confidence, reasoning, and EV economics |
-| `policy_checks` | Every guardrail evaluation and its result |
-| `executions` | Every side effect, REAL or SIMULATED |
-| `outcomes` | Recovered / not recovered / pending, and revenue |
-| `audit_log_entries` | Append-only ordered trail of everything |
-| `processed_events` | Idempotency ledger (one row per `payment_id` ever seen) |
-| `evaluation_runs` / `evaluation_results` | Batch runs and their computed metrics |
+| Frontend (Vercel) | <https://trace-xi-nine.vercel.app> |
+| Backend API (Render) | <https://trace-backend-4uu2.onrender.com> |
+| API docs | <https://trace-backend-4uu2.onrender.com/docs> |
 
----
+A fresh deploy auto-seeds one HEURISTIC, seed-42, 300-case evaluation run on boot, so
+the dashboard opens on real populated data instead of a wall of 404s. Render's free
+tier spins the backend down when idle — the first request after a quiet period can
+take 20-30s to wake it up.
 
-## 5. The agent
+## 6. Quickstart
 
-Two interchangeable engines behind one interface, selected by `AGENT_MODE`.
-
-### `HEURISTIC` (default)
-
-Deterministic, explainable, no network calls, fully reproducible. For each failure
-type it holds a table of base "fit" weights per action, then scores candidates:
-
-```
-probability = base_fit
-            × (0.4 + 0.6 × customer_success_rate)     # customer history
-            × max(0.3, 1 − 0.2 × previous_attempts)   # diminishing returns
-            clamped to [0.02, 0.95]
-
-expected_value = amount × probability
-```
-
-It picks the highest-expected-value action, excluding one that was just tried and
-failed. It hard-stops when there are no opportunities left, escalates when
-classification confidence is too low (< 0.35), stops when expected value no longer
-justifies the effort, and escalates high-value transactions after a failed attempt
-rather than continuing to automate.
-
-This is a genuine contextual decision engine — it reasons case by case about value,
-history, failure type, engagement, and prior attempts. That is exactly what the static
-baseline does *not* do.
-
-### `LLM`
-
-A real Groq call returning structured JSON, constrained to the same action space. Used
-for the live/demo path. **If the call fails, TRACE does not silently fall back to the
-heuristic engine** — it surfaces `ESCALATE_FOR_REVIEW` with `is_fallback=true`, because
-quietly swapping decision engines would be dishonest about what actually reasoned.
-
-The client is bounded (`timeout=15s`, `max_retries=0`) so a slow API can never stall a
-request or hold a database transaction open.
-
-### Expected-value economics
-
-Every decision — from *either* engine — is annotated with:
-
-| Field | Meaning |
-|---|---|
-| `expected_value` | `amount × estimated recovery probability` (₹) |
-| `intervention_cost` | Rough operating cost of the chosen action (₹) |
-| `net_expected_value` | `expected_value − intervention_cost` |
-
-Costs: `RETRY_PAYMENT` ₹0.50 · `SEND_RECOVERY_LINK` ₹2 ·
-`SUGGEST_ALTERNATIVE_METHOD` ₹2 · `WAIT_AND_REASSESS` ₹0 · `ESCALATE_FOR_REVIEW` ₹150 ·
-`STOP_RECOVERY` ₹0
-
-Only the three **direct-recovery** actions can complete a payment this turn, so only
-they earn expected value; the rest carry their cost with no offset.
-
-Crucially, the probability is computed by a shared deterministic function
-(`_estimate_probability`) regardless of which engine decided. That is what makes
-"expected value" **auditable** rather than just another model output.
-
----
-
-## 6. The policy & control layer
-
-`app/policy.py` is 100% deterministic with zero dependency on the agent. It would
-behave identically no matter what produced the proposed action — which is what makes
-TRACE's safety properties verifiable independently of the AI.
-
-| # | Rule | Result |
-|---|---|---|
-| 1 | Case already `RECOVERED` | BLOCKED |
-| 2 | Case already `STOPPED` / `EXPIRED` | BLOCKED |
-| 3 | Recovery window expired | BLOCKED -> forced `STOP_RECOVERY` |
-| 4 | `previous_recovery_attempts >= MAX_RECOVERY_ATTEMPTS` | BLOCKED -> forced `STOP_RECOVERY` |
-| 5 | No remaining recovery opportunities | BLOCKED -> forced `STOP_RECOVERY` |
-| 6 | Same action repeated beyond `MAX_SAME_ACTION_REPEATS` | BLOCKED -> `ESCALATE_FOR_REVIEW` |
-| 7 | Agent confidence below `POLICY_MIN_CONFIDENCE` | FLAGGED_FOR_REVIEW |
-| 8 | High-value transaction stopped on the very first attempt | FLAGGED_FOR_REVIEW |
-| 9 | Everything passed | APPROVED |
-
-### Per-failure-type recovery windows
-
-The window in rule 3 is not flat:
-
-| Failure type | Window | Why |
-|---|---|---|
-| `BANK_TIMEOUT` | **60 min** | NPCI mandates auto-reversal of most failed UPI transactions within ~60 minutes. Past that the money is already back with the customer, so continued automated recovery is moot. |
-| everything else | 4320 min (3 days) | No equivalent regulatory auto-reversal. |
-
-Both values are surfaced through `GET /policy/config` so the UI never hard-codes a copy
-that could drift.
-
----
-
-## 7. Execution, email, and real-vs-simulated
-
-TRACE never blurs the line between what actually happened and what was simulated.
-
-| Real | Simulated |
-|---|---|
-| Email delivery (when explicitly enabled) | Payment completion / failure |
-| Link click-through events | Recovered revenue amounts |
-| All system + audit logging | Customer engagement in batch mode |
-
-Every `ExecutionRecord` carries `execution_type` (`REAL` or `SIMULATED`), every
-`OutcomeRecord` carries `simulated`, and the UI labels both.
-
-### Email safety
-
-Recovery emails are fully rendered (branded HTML + plain-text fallback, dynamic urgency
-copy driven by the case's *real* remaining attempts, and an idempotency reassurance
-line). But a **real SMTP send only happens when explicitly opted in** — that is, when
-the case carries a deliberately-set `customer_email`.
-
-Without it, execution falls back to a `customer+<payment_id>@example.com` placeholder
-and delivery is recorded as `SIMULATED`, with the full rendered body kept in the audit
-trail so you can see exactly what *would* have been sent.
-
-This matters: batch evaluation touches hundreds of cases, and mailing fake addresses
-for real would be both wrong and ruinously slow (~1.5 s of network per send, inside an
-open database transaction).
-
-To deliberately receive a real email:
-
-```jsonc
-// live ingest
-POST /cases/ingest   { "...": "...", "customer_email": "you@example.com" }
-
-// or route the first N cases of a batch to a real inbox
-POST /evaluation/run { "dataset_size": 300, "demo_email": "you@example.com",
-                       "demo_email_count": 2 }
-```
-
-Only the TRACE copy of a demo case gets the real address, so you never receive two
-emails for the same underlying transaction.
-
----
-
-## 8. Audit trail & idempotency
-
-**Audit.** Every classification, decision, policy check, execution, outcome,
-reassessment, status change, and engagement event is appended to `audit_log_entries`
-with a payload and timestamp. Any case can be fully explained after the fact — that is
-what the Case Investigation page renders.
-
-**Idempotency.** `processed_events` holds one row per `payment_id` ever accepted. If
-the same event arrives again, TRACE does **not** create a duplicate case, rerun the
-agent, resend an email, or re-execute an action. It increments a duplicate counter,
-logs a `DUPLICATE_EVENT`, and returns the existing case.
-
----
-
-## 9. Batch evaluation harness
-
-`POST /evaluation/run` generates N synthetic failed payments and runs **the same
-dataset** through both systems with **matched per-case RNG seeds**, so differences in
-outcome are driven by the decisions made, not by lucky draws.
-
-- **TRACE** — full contextual agent + policy + bounded reassessment loop.
-- **BASELINE** — `app/baseline.py`: one fixed `failure_type -> action` mapping, executed
-  exactly once, with no awareness of value, history, or engagement, and no policy layer.
-  This is the "retry -> wait -> remind -> stop" pattern TRACE improves on.
-
-A **hidden outcome model** (`app/simulation/hidden_outcome_model.py`) decides whether an
-action actually recovers the payment. The agent never sees it — it must infer what works
-from context alone.
-
-Two properties the harness guarantees:
-
-- **Reproducible.** Pass an explicit `seed` and you get a byte-identical run.
-  Classification inside the batch is forced deterministic (no LLM calls), because a
-  network call per case both takes ~10 minutes and destroys reproducibility.
-- **Serialized.** SQLite allows one writer; a second concurrent run gets a clean `409`
-  instead of racing and corrupting the first.
-
-Omit `seed` and the API picks a **fresh random one** — clicking "Run new evaluation"
-should produce a genuinely new batch, not silently replay the same dataset.
-
----
-
-## 10. Metrics
-
-Computed purely from persisted rows (`app/evaluation/metrics.py`) — nothing is
-hand-tuned. If the simulation behaves badly, the numbers show it.
-
-| Metric | Meaning |
-|---|---|
-| `total_failed_payments` | Cases in the run |
-| `revenue_at_risk` | Sum of failed transaction amounts |
-| `recovery_attempts` | Active interventions executed |
-| `transactions_recovered` | Cases ending `RECOVERED` |
-| `revenue_recovered` | Simulated recovered revenue |
-| `recovery_rate` | recovered / total |
-| `unnecessary_interventions` | Active interventions on cases that never recovered |
-| `interventions_avoided` | Cases correctly not pursued at all |
-| `cases_stopped` / `cases_escalated` | Terminal dispositions |
-| `policy_blocked_actions` | Proposals the control layer refused |
-| **`recovery_value_per_intervention`** | **The headline efficiency number** |
-
-### Recovery efficiency frontier
-
-`GET /dashboard/frontier` returns, per system, a cumulative
-`(interventions, revenue_recovered)` curve with each system's **best value-density cases
-spent first**. A curve that climbs faster per intervention is recovering more revenue
-for the same effort — the visual form of the core thesis.
-
----
-
-## 11. API reference
-
-### Cases
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/cases/ingest` | Ingest a payment-failure event; runs the first iteration unless `?run_first_iteration=false` |
-| `POST` | `/cases/{payment_id}/reassess` | One more bounded reassessment pass |
-| `POST` | `/cases/{payment_id}/click` | Simulate the customer clicking the recovery link |
-| `GET` | `/cases/{payment_id}` | Full case detail: decisions, policy checks, executions, outcomes, audit log |
-| `GET` | `/cases` | List/filter cases — `status`, `system`, `source`, `eval_run_id`, `limit`, `offset` |
-
-### Evaluation
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/evaluation/run` | Run a batch — `dataset_size`, `seed`, `demo_email`, `demo_email_count` |
-| `GET` | `/evaluation/runs` | List recent runs |
-| `GET` | `/evaluation/runs/{run_id}` | Fetch one run's stored metrics |
-
-### Dashboard
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/dashboard/overview` | Headline metrics for one system |
-| `GET` | `/dashboard/failures` | Breakdown by failure type |
-| `GET` | `/dashboard/decisions` | Action + policy-result distribution |
-| `GET` | `/dashboard/comparison` | TRACE vs BASELINE, same batch |
-| `GET` | `/dashboard/frontier` | Recovery-efficiency frontier curves |
-
-All dashboard endpoints accept `?eval_run_id=`. Omitted, they resolve to the **latest
-completed run** — a run only counts as complete once its `evaluation_results` rows are
-written, so the dashboard never latches onto a batch that is still being generated.
-
-### Policy
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/policy/config` | Live thresholds, per-failure-type windows, intervention costs, and every rule description |
-
----
-
-## 12. Frontend
-
-React 19 + Vite + Tailwind CSS v4 + Recharts + React Router 7, in a dark "Signal
-Intelligence" design system: obsidian surfaces, bone text, and semantic signal colors
-(orange = TRACE activity, mint = recovered, amber = review, red = stopped/blocked).
-
-| Route | Page | What it shows |
-|---|---|---|
-| `/` | **Command Center** | Revenue at risk, recovered, recovery rate, efficiency; live recovery flow; cases needing attention; the *Run new evaluation* trigger |
-| `/cases` | **Recovery Cases** | The intelligence queue, filterable by status and scoped to either live cases or a specific batch run |
-| `/cases/:paymentId` | **Case Investigation** | The money page: full reasoning, EV breakdown, policy verdicts, execution details, outcome, and the ordered audit timeline |
-| `/performance` | **Performance** | TRACE vs baseline — hero efficiency stat, revenue bars, efficiency frontier, full metric table |
-| `/policy` | **Policy & Control** | Every guardrail, threshold, recovery window, and intervention cost, read live from the backend |
-
-### Run scoping
-
-Batch runs accumulate. Every data page carries a **`RunSelector`** so you always know
-which batch you are looking at:
-
-- Command Center and Performance default to the most recent run.
-- Recovery Cases defaults to **"Live cases only"** — the individually-ingested demo
-  cases you actually click through in a demo, which don't shift when a new batch runs.
-- The selection is reflected in the URL (`?eval_run_id=...`), so views are shareable and
-  survive a refresh, and deep links (e.g. "View all escalated") land on the right run.
-
----
-
-## 13. Configuration
-
-All settings live in `app/config.py` and are overridable via `backend/.env`.
-
-| Setting | Default | Purpose |
-|---|---|---|
-| `DATABASE_URL` | `sqlite:///./trace.db` | Database connection |
-| `AGENT_MODE` | `HEURISTIC` | `HEURISTIC` or `LLM` |
-| `GROQ_API_KEY` / `GROQ_MODEL` | — | Live LLM path (classification + decisions) |
-| `AGENT_MIN_CONFIDENCE` | `0.5` | Agent's own confidence floor |
-| `MAX_RECOVERY_ATTEMPTS` | `3` | Hard attempt ceiling |
-| `RECOVERY_WINDOW_MINUTES` | `4320` | Default recovery window (3 days) |
-| `RECOVERY_WINDOW_MINUTES_BANK_TIMEOUT` | `60` | NPCI auto-reversal window |
-| `MAX_SAME_ACTION_REPEATS` | `1` | Never hammer one action |
-| `HIGH_VALUE_THRESHOLD` | `50000` | ₹ threshold for extra human oversight |
-| `POLICY_MIN_CONFIDENCE` | `0.4` | Below this -> human review |
-| `MAX_REASSESSMENT_ITERATIONS` | `4` | Hard bound on the autonomous loop |
-| `SMTP_*` | — | Real email; leave blank for simulated sends |
-| `SMTP_TIMEOUT_SECONDS` | `15` | Never let a hung SMTP call stall a request |
-| `SIMULATION_SEED` | `42` | Default seed for direct/programmatic runs |
-| `DEFAULT_BATCH_SIZE` | `300` | Default dataset size |
-
-Frontend: `frontend/.env` -> `VITE_API_BASE_URL` (default `http://localhost:8000`).
-
----
-
-## 14. Testing
+### Backend
 
 ```bash
-cd backend && pytest -q
+cd backend
+python -m venv venv
+venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env           # edit for real SMTP / a real Groq key
+python run.py                  # or: uvicorn app.main:app --reload
 ```
 
-42 tests, ~15 s.
+Interactive API docs: <http://localhost:8000/docs>. SQLite (`backend/trace.db`) is
+created automatically on first start.
 
-| File | Covers |
-|---|---|
-| `test_agent.py` | Decision quality, bounded action space, safe LLM fallback |
-| `test_policy.py` | Every guardrail rule independently |
-| `test_classification.py` | Structured codes, keyword fallback, never-guess behavior |
-| `test_idempotency.py` | Duplicate events never double-process |
-| `test_evaluation.py` | Both systems produce metrics; same seed reproduces; attempt bounds hold |
-| `test_integration.py` | Full API surface, including live reassessment convergence |
-
-Frontend:
+### Frontend
 
 ```bash
-cd frontend && npm run build && npm run lint
+cd frontend
+npm install
+cp .env.example .env           # set VITE_API_BASE_URL if the backend isn't on :8000
+npm run dev
 ```
 
----
+Opens on <http://localhost:5173>.
 
-## 15. Operational notes
+### First run
 
-**Schema changes need a fresh database.** `create_all` creates missing *tables*, not
-missing *columns*. After a model change, stop the server and delete `trace.db`,
-`trace.db-wal`, and `trace.db-shm`. (Newly declared *indexes* are handled automatically
-by `init_db`.)
+1. Open the app and read the landing page's seven-card argument, or jump straight to
+   **/dashboard**.
+2. **Recovery Cases → Simulate failed payment** to push one live case through the
+   full loop and land on its Case Investigation view — pick a demo preset to reliably
+   exercise a specific behaviour (routing to the LLM, an expired BANK_TIMEOUT, etc.).
+3. **Performance** for the TRACE-vs-baseline comparison and efficiency frontier.
+4. **Policy & Control** to see every guardrail and threshold read live from the
+   running backend.
 
-**SQLite runs in WAL mode** with a 30 s busy timeout, so dashboard reads and a running
-batch don't block each other. If you ever see `database is locked`, it means a process
-is holding a stranded write transaction — stop every `python`/`uvicorn` process and
-delete the `trace.db*` files.
+## 7. Measured results
 
-**One evaluation at a time.** A second concurrent `POST /evaluation/run` returns `409`.
-This is deliberate: overlapping writers were what previously left half-finished runs and
-stranded locks.
+300 synthetic failed payments, seed 42, run through TRACE (`HEURISTIC`, the mode the
+benchmark is locked to) and the static baseline on identical data. Freshly re-run for
+this document — reproduce it yourself with `POST /evaluation/run {"seed": 42}` (see
+[backend/README.md §5](backend/README.md#5-the-evaluation-harness-and-why-its-force-deterministic)).
 
-**Batch runs never make network calls.** Classification is forced deterministic and
-email is simulated, so a 300-case run takes ~10-15 s instead of ~10 minutes.
+| Metric | BASELINE | TRACE |
+|---|---|---|
+| Total failed payments | 300 | 300 |
+| Revenue at risk | ₹10,08,761.21 | ₹10,08,761.21 |
+| Recovery actions taken | 249 | 310 |
+| Transactions recovered | 61 | 75 |
+| Revenue recovered *(simulated)* | ₹1,90,784.18 | ₹2,70,759.09 |
+| Recovery rate | 20.33% | 25.00% |
+| Unnecessary interventions | 188 | 212 |
+| Interventions avoided | 43 | **98** |
+| Cases stopped | 239 | 220 |
+| Cases escalated | 0 | 5 |
+| Policy-blocked actions | 0 | 71 |
+| **Recovery value per intervention** | ₹766.20 | **₹873.42** |
 
-**Run time grows with database size.** Each run adds ~600 cases plus child rows.
-Deleting `trace.db` resets it.
+TRACE recovers 42% more revenue, at a recovery rate 23% higher (relative), from the
+identical pot of failed payments — while declining more than twice as many cases up
+front. See [§9](#9-known-limitations) for the one bucket (BANK_TIMEOUT) where the
+baseline still edges it, and why.
 
----
+## 8. Razorpay Track 03 alignment
 
-## 16. Known limitations & open decisions
+Track 03 asks for an AI agent that decides whether a failed payment is worth pursuing,
+takes the appropriate next action, and demonstrates measurable value over a naive
+approach — with the judgment auditable, not just trusted. TRACE's pieces map directly:
+a bounded, priced action space instead of free-form generation; an expected-value
+economics layer (`expected_value` / `intervention_cost` / `net_expected_value`) that
+makes "worth pursuing" a number, not a vibe; a deterministic policy layer that can
+overrule the AI and is independently testable; a full audit trail so any case's
+decision can be reconstructed after the fact; and a same-data, same-seed comparison
+against a static baseline so "TRACE is better" is a measured claim rather than a
+marketing one.
 
-These are deliberate scope choices, documented rather than hidden.
+## 9. Known limitations
 
-- **No real payment gateway.** Payment completion is simulated by the hidden outcome
-  model. Every simulated value is labeled as such throughout the API and UI.
-- **The baseline currently out-performs TRACE on total recovery** in the default
-  dataset. This is a *data* problem, not an agent problem: the synthetic generator
-  produces `time_since_failure_minutes` with a median of ~1535 min, so ~97 of 99
-  `BANK_TIMEOUT` cases arrive already past the 60-minute NPCI window and TRACE's policy
-  layer correctly force-stops them — while the baseline, which has no policy layer at
-  all, acts on them anyway. Making the benchmark meaningful means giving `BANK_TIMEOUT`
-  cases realistic fresh ages in `simulation/generator.py`. Left as an explicit decision,
-  because tuning a benchmark so the product wins is a call the project owner should make.
+- **No real payment gateway.** Payment completion is simulated by a hidden outcome
+  model the agent never sees. Every simulated value is labeled as such throughout the
+  API and UI.
+- **The BANK_TIMEOUT bucket is the one place the baseline still edges TRACE.** Of 98
+  BANK_TIMEOUT cases in the seed-42 benchmark, BASELINE recovers 28 (₹95,558.89) vs
+  TRACE's 25 (₹74,051.39). The baseline retries every case immediately with no
+  awareness of the 60-minute NPCI auto-reversal window; TRACE sometimes picks
+  `WAIT_AND_REASSESS` first on a case that was still fresh, and the resulting time
+  jump can age it past that window before its next reassessment pass — at which point
+  its own policy layer correctly force-stops it. TRACE's deliberation costs it a
+  narrow, honest loss in exactly the bucket where hesitation is expensive. Left as an
+  observed property of the current heuristic ordering, not patched to force a win.
 - **`POST /cases/{id}/click` is not idempotent.** Repeated calls append additional
-  outcome rows rather than being rejected. The UI guards against this (the button only
-  appears while engagement is `LINK_SENT`), but the endpoint itself is still open.
-- **Single-process assumptions.** The evaluation lock is in-process and SQLite is
-  single-writer. Fine for a demo; a multi-worker deployment would need Postgres and a
-  shared lock.
-- **No authentication.** CORS is wide open and every endpoint is unauthenticated.
+  outcome rows. The UI guards against this; the endpoint itself doesn't.
+- **Single-writer assumption locally.** SQLite (local dev) allows one writer; a
+  concurrent `POST /evaluation/run` gets a clean `409` rather than racing. The
+  deployed backend runs Postgres.
+- **No authentication.** CORS is scoped to the deployed frontend; every endpoint is
+  otherwise unauthenticated.
+
+Backend internals, the orchestration loop, the four routing triggers, and three real
+bugs found once a live LLM key was exercised: [backend/README.md](backend/README.md).
+Frontend design system and page tour: [frontend/README.md](frontend/README.md).
