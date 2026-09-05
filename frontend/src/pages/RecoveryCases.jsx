@@ -45,11 +45,11 @@ function QueueHead() {
   );
 }
 
-function QueueRow({ caseData }) {
+function QueueRow({ caseData, returnQuery }) {
   const { activeIndex, finalSignal } = deriveTraceStageSummary(caseData);
   return (
     <Link
-      to={`/cases/${encodeURIComponent(caseData.payment_id)}`}
+      to={`/cases/${encodeURIComponent(caseData.payment_id)}${returnQuery}`}
       className={`grid ${COLS} items-center gap-x-5 gap-y-2 border-b border-rule px-4 py-3 transition-colors last:border-b-0 hover:bg-paper-alt sm:px-6`}
     >
       <div className="order-1 min-w-0">
@@ -151,6 +151,13 @@ export default function RecoveryCases() {
 
   const counts = useMemo(() => cases?.length ?? 0, [cases]);
 
+  // Carried onto each case link so Case Investigation's back link can return
+  // to this exact filtered view -- status and scope only, the same two
+  // params this page itself keeps on the URL. Page number is deliberately
+  // not part of it: it already isn't reflected in the URL here either, so a
+  // return visit lands on page 1 of the filter, same as any fresh visit to it.
+  const returnQuery = searchParams.toString() ? `?${searchParams.toString()}` : "";
+
   return (
     <div>
       <PageHeader
@@ -207,7 +214,7 @@ export default function RecoveryCases() {
             <div className="record overflow-hidden pb-1">
               <QueueHead />
               {cases.map((c) => (
-                <QueueRow key={c.payment_id} caseData={c} />
+                <QueueRow key={c.payment_id} caseData={c} returnQuery={returnQuery} />
               ))}
             </div>
 

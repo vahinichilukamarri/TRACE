@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
-import { useParams } from "react-router-dom";
-import { MousePointerClick, RefreshCw, Ban } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, MousePointerClick, RefreshCw, Ban } from "lucide-react";
 import { api } from "@/api/client";
 import { useApi } from "@/hooks/useApi";
 import { PageHeader, Section } from "@/components/Page";
@@ -16,6 +16,7 @@ import {
   CASE_STATUS_LABELS,
   DECISION_WORTHINESS,
   FAILURE_LABELS,
+  SIGNAL_CLASSES,
   STATUS_SIGNAL,
 } from "@/lib/domain";
 import { formatCurrency, formatDateTime, formatPercent } from "@/lib/format";
@@ -67,17 +68,117 @@ function PassHeader({ index, round, overridden }) {
   );
 }
 
+/**
+ * Direct-selection stepper, numbered by iteration -- replaces scrolling
+ * through every pass with jumping straight to one. Each tab carries the
+ * pass's own signals rather than a bare index: a red dot for a policy
+ * override (so an override is spottable without opening the pass), and the
+ * case's real terminal signal on whichever tab is the last pass of a closed
+ * case, so "recovered" reads as mint here the same way it does everywhere
+ * else in the app.
+ */
+function PassTabs({ rounds, selected, onSelect, isTerminalCase, finalSignal }) {
+  return (
+    <div
+      role="group"
+      aria-label="Adjudication passes"
+      className="flex flex-wrap gap-2 border-t border-graphite/25 bg-paper-alt px-5 py-3.5 sm:px-7"
+    >
+      {rounds.map((round, i) => {
+        const isSelected = i === selected;
+        const isFinalPass = isTerminalCase && i === rounds.length - 1;
+        const finalCls = isFinalPass ? SIGNAL_CLASSES[finalSignal] || SIGNAL_CLASSES.neutral : null;
+        const overridden =
+          !!round.policy?.final_action && round.policy.final_action !== round.policy.proposed_action;
+
+        return (
+          <button
+            key={i}
+            type="button"
+            aria-current={isSelected ? "step" : undefined}
+            aria-label={`Pass ${i + 1} of ${rounds.length}, iteration ${round.iteration}${
+              i === 0 ? ", initial assessment" : ", reassessment"
+            }${isFinalPass ? ", final" : ""}${overridden ? ", policy overrode this pass" : ""}`}
+            onClick={() => onSelect(i)}
+            className={`relative flex min-w-[3.75rem] flex-col items-center gap-0.5 rounded-xs border px-3 py-2 transition-colors ${
+              isSelected
+                ? isFinalPass
+                  ? `${finalCls.borderMuted} ${finalCls.dim}`
+                  : "border-electric bg-electric/8"
+                : "border-rule bg-paper-hi hover:border-graphite/45"
+            }`}
+          >
+            {/* Override marker: a small block dot, visible whether or not the
+                tab is selected -- scanning the row should surface it. */}
+            {overridden && (
+              <span
+                aria-hidden="true"
+                className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-paper bg-block"
+              />
+            )}
+            <span
+              className={`tnum text-lg font-semibold leading-none ${
+                isSelected ? (isFinalPass ? finalCls.text : "text-electric") : "text-graphite/75"
+              }`}
+            >
+              {round.iteration}
+            </span>
+            <span
+              className={`eyebrow leading-none ${
+                isSelected ? (isFinalPass ? finalCls.text : "text-electric") : "text-graphite/55"
+              }`}
+            >
+              {i === 0 ? "initial" : `reassess ${i}`}
+            </span>
+            {isFinalPass && (
+              <span
+                className={`eyebrow leading-none ${isSelected ? finalCls.text : "text-graphite/45"}`}
+              >
+                final
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function CaseInvestigation() {
   const { paymentId } = useParams();
+  // The Recovery Cases queue links here with its current status/eval_run_id
+  // filter carried on the URL (see RecoveryCases.jsx), using the same param
+  // names that page itself reads -- so forwarding this query string straight
+  // back to /cases reproduces exactly the filtered view the case was opened
+  // from. A direct visit (search jump, simulate dialog, dashboard card) has
+  // no such params, so the fallback is the plain unscoped route.
+  const [searchParams] = useSearchParams();
+  const backQuery = searchParams.toString();
+  const backTo = backQuery ? `/cases?${backQuery}` : "/cases";
   const [actionPending, setActionPending] = useState(false);
+  // null means "follow the newest pass" -- an explicit number means the
+  // viewer jumped somewhere on purpose and a background refresh (e.g. the
+  // link-click action, which doesn't add a pass) shouldn't yank them away.
+  const [selectedPass, setSelectedPass] = useState(null);
 
   const fetcher = useCallback(() => api.getCase(paymentId), [paymentId]);
   const { data: caseData, loading, error, refresh } = useApi(fetcher, [paymentId]);
+
+  // A different case is a different set of passes -- start it on the newest
+  // one rather than carrying over a tab index from whatever was open before.
+  useEffect(() => {
+    setSelectedPass(null);
+  }, [paymentId]);
 
   const { activeIndex, finalSignal, reassessed } = deriveTraceStage(caseData);
   const rounds = groupCaseIterations(caseData);
   const latestDecision = caseData?.decisions?.[caseData.decisions.length - 1];
   const isTerminal = caseData && caseData.status !== "OPEN";
+  // Clamp rather than trust the stored index: a case with fewer passes than
+  // whatever was last selected (a fresh case load) still needs a valid pass.
+  const passIndex =
+    rounds.length === 0 ? 0 : Math.min(selectedPass ?? rounds.length - 1, rounds.length - 1);
+  const selectedRound = rounds[passIndex];
 
   const canReassess = caseData && !isTerminal;
 
@@ -103,6 +204,9 @@ export default function CaseInvestigation() {
     try {
       await api.reassessCase(paymentId);
       await refresh();
+      // A reassessment appends a new pass -- jump to it rather than leaving
+      // the viewer looking at what is now a stale one.
+      setSelectedPass(null);
     } catch (e) {
       console.error(e);
     } finally {
@@ -132,6 +236,15 @@ export default function CaseInvestigation() {
         eyebrow="Case investigation"
         title={paymentId}
         description="Why TRACE did what it did — every observation, decision, guardrail, and outcome, in order."
+        back={
+          <Link
+            to={backTo}
+            className="eyebrow mb-3 inline-flex w-fit items-center gap-1.5 text-cream-dim transition-colors hover:text-electric-bright"
+          >
+            <ArrowLeft className="h-3 w-3 shrink-0" strokeWidth={2} />
+            back to recovery cases
+          </Link>
+        }
         action={
           caseData && (
             <div className="flex flex-wrap items-center gap-2">
@@ -254,26 +367,41 @@ export default function CaseInvestigation() {
                 <Fact label="passes recorded" value={rounds.length} />
               </div>
 
-              {/* ------------------------------------------------ the passes */}
+              {/* ------------------------------------------------ the passes
+                  Direct selection, not scroll: the tabs jump straight to one
+                  pass's full record -- engine, proposal, economics, policy,
+                  execution, outcome -- exactly as it rendered before, just
+                  one at a time instead of all stacked. */}
               {rounds.length === 0 ? (
                 <div className="px-5 py-8 text-sm text-graphite/70 sm:px-7">
                   No adjudication pass has run against this case yet.
                 </div>
               ) : (
-                rounds.map((round, i) => {
-                  const overridden =
-                    !!round.policy?.final_action &&
-                    round.policy.final_action !== round.policy.proposed_action;
-                  return (
-                    <section key={i}>
-                      <PassHeader index={i} round={round} overridden={overridden} />
-                      <DecisionPanel decision={round.decision} />
-                      <PolicyCheckPanel policy={round.policy} />
-                      {round.execution && <ExecutionPanel execution={round.execution} />}
-                      {round.outcome && <OutcomePanel outcome={round.outcome} />}
+                <>
+                  <PassTabs
+                    rounds={rounds}
+                    selected={passIndex}
+                    onSelect={setSelectedPass}
+                    isTerminalCase={isTerminal}
+                    finalSignal={finalSignal}
+                  />
+                  {selectedRound && (
+                    <section key={passIndex}>
+                      <PassHeader
+                        index={passIndex}
+                        round={selectedRound}
+                        overridden={
+                          !!selectedRound.policy?.final_action &&
+                          selectedRound.policy.final_action !== selectedRound.policy.proposed_action
+                        }
+                      />
+                      <DecisionPanel decision={selectedRound.decision} />
+                      <PolicyCheckPanel policy={selectedRound.policy} />
+                      {selectedRound.execution && <ExecutionPanel execution={selectedRound.execution} />}
+                      {selectedRound.outcome && <OutcomePanel outcome={selectedRound.outcome} />}
                     </section>
-                  );
-                })
+                  )}
+                </>
               )}
 
               {/* ----------------------------------------------- settlement */}

@@ -1,8 +1,11 @@
 /* Page chrome lives on the desk: slash eyebrow, display heading, hairline. */
-export function PageHeader({ eyebrow, title, description, action }) {
+export function PageHeader({ eyebrow, title, description, action, back }) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4 border-b border-void-line px-6 pb-6 pt-8 sm:px-8">
       <div className="min-w-0">
+        {/* Optional: a way back to wherever this page was reached from, set
+            above the eyebrow so it reads before the page identifies itself. */}
+        {back}
         {/* The accent at full saturation is 2.8:1 on the near-black ground --
             under the floor for 11px type. The lifted variant is the same hue. */}
         {eyebrow && <div className="eyebrow mb-2 text-electric-bright">/ {eyebrow}</div>}
