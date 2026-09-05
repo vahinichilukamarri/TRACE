@@ -14,6 +14,7 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.database import _is_sqlite
 from app.models import RecoveryCase, EvaluationRun, EvaluationResult
 from app.simulation.generator import generate_dataset, SyntheticCase
 from app.engine import ensure_classified, run_to_completion
@@ -135,11 +136,13 @@ def run_evaluation(db: Session, dataset_size: int = 300, seed: int | None = None
     db.commit()
 
     # Best-effort: fold the WAL back into the main db file so it doesn't grow
-    # without bound across many runs. Never let a checkpoint hiccup fail the run.
-    try:
-        db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
-    except Exception:
-        pass
+    # without bound across many runs. SQLite-only (Postgres has no WAL file to
+    # checkpoint this way); never let a checkpoint hiccup fail the run.
+    if _is_sqlite:
+        try:
+            db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        except Exception:
+            pass
 
     created_at = db.query(EvaluationRun.created_at).filter(
         EvaluationRun.id == run_record_pk

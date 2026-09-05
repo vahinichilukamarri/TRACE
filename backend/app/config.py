@@ -20,9 +20,19 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off", "")
 
 
+def _normalize_db_url(url: str) -> str:
+    # Render (and Heroku-style providers) hand out "postgres://..." but
+    # SQLAlchemy 2.x's psycopg2 dialect requires "postgresql://...".
+    if url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://"):]
+    return url
+
+
 class Settings:
     # --- Database ---
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'trace.db'}")
+    DATABASE_URL: str = _normalize_db_url(
+        os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'trace.db'}")
+    )
 
     # --- Agent ---
     AGENT_MODE: str = os.getenv("AGENT_MODE", "HEURISTIC")  # HEURISTIC | LLM
