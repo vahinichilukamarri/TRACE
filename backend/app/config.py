@@ -127,7 +127,14 @@ class Settings:
 
     # --- App ---
     APP_NAME: str = "TRACE"
-    CORS_ORIGINS: list = ["*"]
+    # Comma-separated list of allowed origins. Defaults to the deployed
+    # frontend only -- set CORS_ORIGINS env var to override/add origins
+    # (e.g. for local dev: "http://localhost:5173,https://trace-xi-nine.vercel.app").
+    CORS_ORIGINS: list = [
+        o.strip() for o in os.getenv(
+            "CORS_ORIGINS", "https://trace-xi-nine.vercel.app"
+        ).split(",") if o.strip()
+    ]
 
 
 settings = Settings()
