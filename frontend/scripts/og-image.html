@@ -1,0 +1,155 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1200px; height: 630px; background: #0E0B08; overflow: hidden; }
+  .stage {
+    position: relative; width: 1200px; height: 630px; overflow: hidden;
+    background:
+      radial-gradient(900px 500px at 88% 40%, rgba(47,48,255,.22), transparent 62%),
+      radial-gradient(600px 400px at 0% 100%, rgba(224,169,59,.07), transparent 70%),
+      #0E0B08;
+    color: #F0E7D6; font-family: 'Inter', sans-serif;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(to right, rgba(240,231,214,.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(240,231,214,.045) 1px, transparent 1px);
+    background-size: 40px 40px;
+    -webkit-mask-image: linear-gradient(90deg, #000 0%, transparent 70%);
+    mask-image: linear-gradient(90deg, #000 0%, transparent 70%);
+  }
+  .frame { position: absolute; inset: 22px; border: 1px solid #2C2318; }
+  .tick { position: absolute; width: 11px; height: 11px; border-color: #F0E7D6; border-style: solid; opacity: .7; }
+  .tl { top: 17px; left: 17px; border-width: 1px 0 0 1px; }
+  .tr { top: 17px; right: 17px; border-width: 1px 1px 0 0; }
+  .bl { bottom: 17px; left: 17px; border-width: 0 0 1px 1px; }
+  .br { bottom: 17px; right: 17px; border-width: 0 1px 1px 0; }
+
+  .left { position: absolute; left: 68px; top: 62px; width: 600px; height: 506px; }
+  .brandrow { display: flex; align-items: center; gap: 14px; }
+  .mark { width: 34px; height: 34px; }
+  .word { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 22px; letter-spacing: .42em; }
+  .event {
+    margin-left: auto; font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; letter-spacing: .14em;
+    color: #B7A88F; text-transform: uppercase; display: flex; align-items: center; gap: 8px;
+  }
+  .event i { width: 6px; height: 6px; border-radius: 50%; background: #7A7BFF; box-shadow: 0 0 10px #7A7BFF; }
+
+  h1 {
+    margin-top: 58px; font-family: 'Instrument Serif', serif; font-weight: 400;
+    font-size: 78px; line-height: .98; letter-spacing: -.02em; color: #F0E7D6;
+  }
+  h1 em { font-style: italic; color: #F0665C; white-space: nowrap; }
+  h1 .ok { font-style: italic; color: #3FBE8C; }
+  .sub {
+    margin-top: 24px; font-family: 'IBM Plex Mono', monospace; font-size: 13.5px; letter-spacing: .05em;
+    color: #B7A88F; line-height: 1.6; max-width: 520px;
+  }
+  .sub b { color: #F0E7D6; font-weight: 500; }
+
+  .stats { position: absolute; left: 0; bottom: 0; display: flex; border-top: 1px solid #2C2318; padding-top: 20px; width: 600px; }
+  .stat { padding-right: 34px; margin-right: 34px; border-right: 1px solid #2C2318; }
+  .stat:last-child { border: 0; margin: 0; padding: 0; }
+  .stat .n { font-family: 'Instrument Serif', serif; font-size: 52px; line-height: 1; color: #F0E7D6; }
+  .stat .n small { font-size: 28px; color: #3FBE8C; }
+  .stat .l { margin-top: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: #8C7F6B; }
+
+  .card {
+    position: absolute; left: 712px; top: 74px; width: 420px; height: 482px;
+    background: #F4EEE1; color: #171009; transform: rotate(2.2deg);
+    box-shadow: 0 40px 80px rgba(0,0,0,.55), 0 0 0 1px #D6CBB4;
+    padding: 26px 28px 0;
+  }
+  .card .hd { display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; letter-spacing: .14em; color: #8C7F6B; text-transform: uppercase; }
+  .card .amt { margin-top: 12px; display: flex; align-items: baseline; justify-content: space-between; }
+  .card .amt .v { font-family: 'Instrument Serif', serif; font-size: 50px; letter-spacing: -.01em; }
+  .card .amt .v span { font-size: 28px; color: #8C7F6B; margin-right: 2px; }
+  .chip { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600; letter-spacing: .12em; padding: 4px 8px; border: 1.5px solid; text-transform: uppercase; }
+  .chip.fail { color: #B3261E; border-color: #B3261E; }
+  .meta { margin-top: 4px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #8C7F6B; letter-spacing: .04em; }
+  .rule { height: 1px; background: #D6CBB4; margin: 16px 0 6px; }
+
+  .steps { position: relative; padding-left: 30px; }
+  .steps svg { position: absolute; left: 0; top: 0; }
+  .step { height: 62px; position: relative; padding-top: 10px; }
+  .step .k { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; color: #8C7F6B; text-transform: uppercase; }
+  .step .t { margin-top: 3px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; display: flex; justify-content: space-between; align-items: center; }
+  .step .t em { font-style: normal; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600; letter-spacing: .1em; padding: 2px 7px; }
+  .g { color: #075038; background: #E4F3EB; }
+  .a { color: #6F4E04; background: #FBF0D8; }
+  .e { color: #1B1CC9; background: #E2E2FF; }
+  .foot { position: absolute; left: 28px; right: 28px; bottom: 20px; display: flex; justify-content: space-between; align-items: end; border-top: 1px dashed #B8AC93; padding-top: 12px; }
+  .foot .l { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .12em; color: #8C7F6B; text-transform: uppercase; line-height: 1.5; }
+  .foot .r { font-family: 'Instrument Serif', serif; font-size: 34px; color: #0E7C55; line-height: 1; }
+  .stamp {
+    position: absolute; right: 26px; top: 352px; transform: rotate(-9deg);
+    font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 17px; letter-spacing: .2em;
+    color: #0E7C55; border: 3px solid #0E7C55; padding: 5px 12px; opacity: .88; background: rgba(244,238,225,.6);
+  }
+  .url { position: absolute; right: 66px; bottom: 36px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: .12em; color: #8C7F6B; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="grid"></div>
+  <div class="frame"></div>
+  <div class="tick tl"></div><div class="tick tr"></div><div class="tick bl"></div><div class="tick br"></div>
+
+  <div class="left">
+    <div class="brandrow">
+      <svg class="mark" viewBox="0 0 34 34" fill="none">
+        <rect x="1" y="1" width="32" height="32" stroke="#F0E7D6" stroke-opacity=".35"/>
+        <path d="M4 10 H14 L17 17 L20 17" stroke="#F0665C" stroke-width="2.2" stroke-linecap="square" stroke-dasharray="6 3"/>
+        <path d="M20 17 H24 L27 24 H30" stroke="#3FBE8C" stroke-width="2.2" stroke-linecap="square"/>
+        <circle cx="20" cy="17" r="3" fill="#7A7BFF"/>
+      </svg>
+      <div class="word">TRACE</div>
+      <div class="event"><i></i>Razorpay AI Buildathon · Track 03</div>
+    </div>
+
+    <h1>A failed payment<br>isn’t a <em>lost</em><br>customer<span class="ok">.</span></h1>
+    <p class="sub"><b>Transaction Recovery Agent</b> with Contextual Evaluation. An AI agent decides. A deterministic policy layer controls.</p>
+
+    <div class="stats">
+      <div class="stat"><div class="n">+42<small>%</small></div><div class="l">Revenue recovered<br>vs static baseline</div></div>
+      <div class="stat"><div class="n">9</div><div class="l">Deterministic<br>policy rules</div></div>
+      <div class="stat"><div class="n">300</div><div class="l">Failed payments<br>benchmarked</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="hd"><span>Recovery statement</span><span>Case 0147</span></div>
+    <div class="amt"><div class="v"><span>₹</span>48,500</div><div class="chip fail">Failed</div></div>
+    <div class="meta">UPI · BANK_TIMEOUT · attempt 1 of 3</div>
+    <div class="rule"></div>
+    <div class="steps">
+      <svg width="30" height="250" viewBox="0 0 30 250">
+        <path d="M10 22 V62" stroke="#B3261E" stroke-width="2" stroke-dasharray="4 4"/>
+        <path d="M10 62 V208" stroke="#1B1CC9" stroke-width="2"/>
+        <path d="M10 146 V208" stroke="#0E7C55" stroke-width="2"/>
+        <circle cx="10" cy="22" r="5" fill="#B3261E"/>
+        <circle cx="10" cy="84" r="5" fill="#F4EEE1" stroke="#1B1CC9" stroke-width="2"/>
+        <circle cx="10" cy="146" r="5" fill="#F4EEE1" stroke="#0E7C55" stroke-width="2"/>
+        <circle cx="10" cy="208" r="5.5" fill="#0E7C55"/>
+      </svg>
+      <div class="step"><div class="k">01 · Evaluate</div><div class="t">Worth recovering?<em class="e">PROCEED</em></div></div>
+      <div class="step"><div class="k">02 · Policy gate</div><div class="t">9 of 9 rules clear<em class="g">APPROVED</em></div></div>
+      <div class="step"><div class="k">03 · Action</div><div class="t">Retry after cooldown<em class="a">EXECUTED</em></div></div>
+      <div class="step"><div class="k">04 · Outcome</div><div class="t">Payment captured</div></div>
+    </div>
+    <div class="stamp">RECOVERED</div>
+    <div class="foot">
+      <div class="l">Immutable audit trail<br>4 events · 0 overrides</div>
+      <div class="r">+₹48,500</div>
+    </div>
+  </div>
+
+  <div class="url">trace-xi-nine.vercel.app</div>
+</div>
+</body>
+</html>
