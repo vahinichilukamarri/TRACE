@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { MotionConfig, motion, useScroll, useTransform } from "motion/react";
 import { HeroAdjudication } from "../components/landing/HeroAdjudication";
-import { CardDeck } from "../components/landing/CardDeck";
+import { Chapters } from "../components/landing/Chapters";
 import { RoutingExplainer } from "../components/landing/RoutingExplainer";
 import { RecoveryLoop } from "../components/landing/RecoveryLoop";
 import { ActionLedger } from "../components/landing/ActionLedger";
@@ -483,18 +483,20 @@ export default function Landing() {
           </div>
 
           {/* --------------------------------------- the deck: chapters 01–07 */}
-          <section className="relative overflow-hidden border-t border-void-line/70 bg-void-soft">
+          {/* overflow-clip, not -hidden: a hidden overflow would become the
+              chapter index's scroll container and stop it sticking. */}
+          <section className="relative overflow-clip border-t border-void-line/70 bg-void-soft">
             <div aria-hidden="true" className="tex-dots pointer-events-none absolute inset-0 opacity-60" />
-            <div className="relative mx-auto w-full max-w-5xl px-6 py-20 sm:px-10 sm:py-24">
-              <Reveal className="mb-8 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
-                <h2 className="display text-[2rem] text-cream sm:text-[2.6rem]">The argument</h2>
-                <span className="eyebrow text-cream-dim/60">
-                  / seven cards — turn them at your own pace
-                </span>
-              </Reveal>
-              <Reveal delay={0.12} y={40}>
-                <CardDeck cards={CARDS} label="The argument, chapters 01 to 07" />
-              </Reveal>
+            <div className="relative mx-auto w-full max-w-6xl px-6 py-20 sm:px-10 sm:py-24">
+              <Chapters
+                cards={CARDS}
+                heading={
+                  <Reveal className="mb-10 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+                    <h2 className="display text-[2rem] text-cream sm:text-[2.6rem]">The argument</h2>
+                    <span className="eyebrow text-cream-dim/60">/ seven chapters, one argument</span>
+                  </Reveal>
+                }
+              />
             </div>
           </section>
 
