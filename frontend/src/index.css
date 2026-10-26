@@ -320,6 +320,81 @@ body:has(.landing-page) *::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, rgba(240, 231, 214, 0.07) 0%, rgba(240, 231, 214, 0.03) 100%);
   border: 1px solid rgba(240, 231, 214, 0.14);
 }
+/* Same glass, on an opaque ground, for surfaces that overlap mid-animation. */
+.glass-solid {
+  background:
+    linear-gradient(180deg, rgba(240, 231, 214, 0.07) 0%, rgba(240, 231, 214, 0.03) 100%),
+    var(--color-void-soft);
+}
+
+/* ---- Border beam ----------------------------------------------------------
+   A point of light that travels a surface's edge. The host is masked down to a
+   1px ring, so the dot only ever shows where the border is. */
+.border-beam {
+  padding: 1px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.border-beam-dot {
+  position: absolute;
+  width: 140px;
+  aspect-ratio: 1;
+  offset-path: rect(0 auto auto 0 round 3px);
+  offset-anchor: 100% 50%;
+  background: linear-gradient(to left, rgba(122, 123, 255, 0.95), rgba(47, 48, 255, 0.4) 40%, transparent);
+}
+
+/* Shimmer that slides across a primary button on hover. */
+.btn-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.btn-shine:hover::after {
+  transform: translateX(120%);
+}
+/* A slow electric bloom drifting behind the hero headline. */
+.hero-orb {
+  background: radial-gradient(closest-side, rgba(47, 48, 255, 0.28), rgba(47, 48, 255, 0.08) 55%, transparent);
+  filter: blur(40px);
+  will-change: transform;
+}
+
+/* Underline that draws in from the left on hover, and retracts to the right. */
+.link-draw {
+  position: relative;
+}
+.link-draw::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.6;
+  transform: scaleX(0.35);
+  transform-origin: left;
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.3s;
+}
+.link-draw:hover::after {
+  transform: scaleX(1);
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .border-beam { display: none; }
+}
 
 /* A cream document lifted off the desk. The shadow is warm, not grey, or the
    card looks pasted on rather than resting there. */

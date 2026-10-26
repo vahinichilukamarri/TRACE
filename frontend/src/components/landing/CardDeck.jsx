@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useDragControls } from "motion/react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { usePrefersReducedMotion } from "./useInView";
+import { SPRING } from "./motion";
 
 /*
  * A deck of chapter cards, advanced by hand.
@@ -9,56 +10,75 @@ import { usePrefersReducedMotion } from "./useInView";
  * installs no scroll or wheel listener. It is one ordinary section in the
  * vertical flow, so the page scrolls past it exactly like any other block.
  *
- * Only the active card (and, briefly, the one being thrown) is mounted. That
- * keeps a single heavy component on the page at a time and lets the section's
- * height follow the active card naturally, with no measurement.
+ * Only the active card (and, briefly, the one being thrown) is mounted. The
+ * stage springs to the active card's measured height, so changing chapters
+ * never snaps the content below it.
  */
 
-const SWIPE_MIN_PX = 48;
-const THROW_MS = 460;
+const SWIPE_PX = 80;
+const SWIPE_VELOCITY = 450;
 /* Gestures starting on a control belong to that control -- the routing
    explainer's sliders are horizontal drags and must not be read as swipes. */
 const INTERACTIVE = "input, button, select, textarea, a, [role='slider'], label";
 
+const cardVariants = {
+  enter: (dir) => ({
+    x: dir > 0 ? "38%" : "-38%",
+    rotate: dir * 3,
+    scale: 0.96,
+    opacity: 0,
+    filter: "blur(6px)",
+  }),
+  center: {
+    x: 0,
+    rotate: 0,
+    scale: 1,
+    opacity: 1,
+    filter: "blur(0px)",
+    transition: { ...SPRING, opacity: { duration: 0.35 }, filter: { duration: 0.4 } },
+    transitionEnd: { filter: "none" },
+  },
+  exit: (dir) => ({
+    x: dir > 0 ? "-70%" : "70%",
+    rotate: dir * -5,
+    scale: 0.94,
+    opacity: 0,
+    filter: "blur(4px)",
+    transition: { duration: 0.42, ease: [0.5, 0, 0.75, 0.2] },
+  }),
+};
+
 export function CardDeck({ cards, label = "Chapters" }) {
-  const reduced = usePrefersReducedMotion();
-  const [index, setIndex] = useState(0);
-  const [leaving, setLeaving] = useState(null); // { index, dir }
-  const busy = useRef(false);
-  const timer = useRef(0);
-  const touch = useRef(null);
+  const [[index, dir], setState] = useState([0, 0]);
+  const [height, setHeight] = useState("auto");
+  const activeRef = useRef(null);
+  const drag = useDragControls();
 
   const count = cards.length;
-
-  useEffect(() => () => clearTimeout(timer.current), []);
 
   // Takes a destination, not a step, so the dots genuinely jump to their card
   // rather than nudging one along and contradicting their own label.
   const goTo = useCallback(
     (next) => {
-      if (next === index || next < 0 || next >= count || busy.current) return;
-      const dir = next > index ? 1 : -1;
-
-      if (reduced) {
-        setIndex(next);
-        return;
-      }
-
-      busy.current = true;
-      setLeaving({ index, dir });
-      setIndex(next);
-      // Fallback clean-up: animationend can be missed if the element is removed
-      // or the animation never starts, and a stuck `busy` would freeze the deck.
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => {
-        setLeaving(null);
-        busy.current = false;
-      }, THROW_MS + 80);
+      if (next === index || next < 0 || next >= count) return;
+      setState([next, next > index ? 1 : -1]);
     },
-    [index, count, reduced]
+    [index, count]
   );
 
-  const step = useCallback((dir) => goTo(index + dir), [goTo, index]);
+  const step = useCallback((d) => goTo(index + d), [goTo, index]);
+
+  // The stage follows the active card's height, including when the card's own
+  // content grows (the recovery loop adds rows as it runs).
+  useLayoutEffect(() => {
+    const node = activeRef.current;
+    if (!node) return undefined;
+    setHeight(node.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(() => setHeight(node.offsetHeight));
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, [index]);
 
   const onKeyDown = (e) => {
     if (e.key === "ArrowRight") {
@@ -70,34 +90,23 @@ export function CardDeck({ cards, label = "Chapters" }) {
     }
   };
 
-  const onTouchStart = (e) => {
-    if (e.target.closest && e.target.closest(INTERACTIVE)) {
-      touch.current = null;
-      return;
-    }
-    const t = e.changedTouches[0];
-    touch.current = { x: t.clientX, y: t.clientY };
+  const onPointerDown = (e) => {
+    if (e.target.closest && e.target.closest(INTERACTIVE)) return;
+    drag.start(e);
   };
 
-  // Read on touchend and never preventDefault: a vertical drag stays an ordinary
-  // page scroll, and only a decisively horizontal one turns a card.
-  const onTouchEnd = (e) => {
-    if (!touch.current) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - touch.current.x;
-    const dy = t.clientY - touch.current.y;
-    touch.current = null;
-    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * 1.5) return;
-    step(dx < 0 ? 1 : -1);
+  const onDragEnd = (_, info) => {
+    const { offset, velocity } = info;
+    if (offset.x < -SWIPE_PX || velocity.x < -SWIPE_VELOCITY) step(1);
+    else if (offset.x > SWIPE_PX || velocity.x > SWIPE_VELOCITY) step(-1);
   };
 
   const card = cards[index];
-  const leavingCard = leaving ? cards[leaving.index] : null;
 
   const surface = (c) =>
     `overflow-hidden rounded-sm ${
       c.dark
-        ? "glass text-cream"
+        ? "glass glass-solid text-cream"
         : "border border-rule bg-paper text-graphite shadow-[0_2px_6px_rgba(0,0,0,0.45),0_26px_60px_-28px_rgba(0,0,0,0.9)]"
     }`;
 
@@ -108,65 +117,79 @@ export function CardDeck({ cards, label = "Chapters" }) {
       aria-label={label}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
       className="relative"
     >
-      {/* Stage. `relative` so the thrown card can overlay without the section
-          collapsing; the active card stays in flow and sets the height. */}
-      <div className="relative">
-        <div
-          key={card.id}
-          className={`${surface(card)} ${
-            reduced || !leaving ? "" : leaving.dir > 0 ? "card-in-right" : "card-in-left"
-          }`}
-        >
-          <div className="p-6 sm:p-10">{card.render()}</div>
-        </div>
-
-        {leavingCard && !reduced && (
-          <div
-            key={`leaving-${leavingCard.id}`}
-            aria-hidden="true"
-            onAnimationEnd={() => {
-              clearTimeout(timer.current);
-              setLeaving(null);
-              busy.current = false;
-            }}
-            className={`pointer-events-none absolute inset-0 ${surface(leavingCard)} ${
-              leaving.dir > 0 ? "card-out-left" : "card-out-right"
-            }`}
+      {/* Stage: springs to the active card's height. */}
+      <motion.div
+        className="relative"
+        animate={{ height }}
+        transition={{ type: "spring", stiffness: 220, damping: 32 }}
+      >
+        <AnimatePresence initial={false} custom={dir} mode="popLayout">
+          <motion.div
+            key={card.id}
+            ref={activeRef}
+            custom={dir}
+            variants={cardVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            drag="x"
+            dragListener={false}
+            dragControls={drag}
+            dragConstraints={{ left: 0, right: 0 }}
+            dragElastic={0.22}
+            dragSnapToOrigin
+            onDragEnd={onDragEnd}
+            onPointerDown={onPointerDown}
+            style={{ touchAction: "pan-y" }}
+            className={`absolute inset-x-0 top-0 cursor-grab active:cursor-grabbing ${surface(card)}`}
           >
-            <div className="p-6 sm:p-10">{leavingCard.render()}</div>
-          </div>
-        )}
-      </div>
+            <div className="p-6 sm:p-10">{card.render()}</div>
+          </motion.div>
+        </AnimatePresence>
+      </motion.div>
 
       {/* Controls and position. */}
       <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-4">
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => step(-1)}
-            disabled={index === 0}
-            aria-label="Previous chapter"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xs border border-cream/20 text-cream transition-colors hover:border-electric hover:text-electric disabled:pointer-events-none disabled:opacity-30"
-          >
-            <ArrowLeft className="h-4 w-4" strokeWidth={2} />
-          </button>
-          <button
-            type="button"
-            onClick={() => step(1)}
-            disabled={index === count - 1}
-            aria-label="Next chapter"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xs border border-cream/20 text-cream transition-colors hover:border-electric hover:text-electric disabled:pointer-events-none disabled:opacity-30"
-          >
-            <ArrowRight className="h-4 w-4" strokeWidth={2} />
-          </button>
+          {[
+            [-1, "Previous chapter", ArrowLeft, index === 0],
+            [1, "Next chapter", ArrowRight, index === count - 1],
+          ].map(([d, aria, Icon, disabled]) => (
+            <motion.button
+              key={d}
+              type="button"
+              onClick={() => step(d)}
+              disabled={disabled}
+              aria-label={aria}
+              whileHover={{ scale: 1.06 }}
+              whileTap={{ scale: 0.92 }}
+              transition={{ type: "spring", stiffness: 400, damping: 22 }}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xs border border-cream/20 text-cream transition-colors hover:border-electric hover:text-electric disabled:pointer-events-none disabled:opacity-30"
+            >
+              <Icon className="h-4 w-4" strokeWidth={2} />
+            </motion.button>
+          ))}
         </div>
 
-        <span className="eyebrow tnum text-cream">
-          {String(index + 1).padStart(2, "0")} / {String(count).padStart(2, "0")}
+        <span className="eyebrow tnum inline-flex overflow-hidden text-cream">
+          <span className="relative inline-block h-[1.2em] w-[2ch]">
+            <AnimatePresence initial={false} custom={dir} mode="popLayout">
+              <motion.span
+                key={index}
+                custom={dir}
+                initial={{ y: dir >= 0 ? "100%" : "-100%", opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: dir >= 0 ? "-100%" : "100%", opacity: 0 }}
+                transition={SPRING}
+                className="absolute inset-0"
+              >
+                {String(index + 1).padStart(2, "0")}
+              </motion.span>
+            </AnimatePresence>
+          </span>
+          &nbsp;/ {String(count).padStart(2, "0")}
         </span>
 
         <div className="flex gap-2">
@@ -177,15 +200,21 @@ export function CardDeck({ cards, label = "Chapters" }) {
               onClick={() => goTo(i)}
               aria-label={`Go to ${c.title}`}
               aria-current={i === index}
-              className={`h-1.5 w-7 rounded-full transition-colors ${
-                i === index ? "bg-electric" : "bg-cream/25 hover:bg-cream/45"
-              }`}
-            />
+              className="relative h-1.5 w-7 rounded-full bg-cream/20 transition-colors hover:bg-cream/40"
+            >
+              {i === index && (
+                <motion.span
+                  layoutId="deck-dot"
+                  className="absolute inset-0 rounded-full bg-electric shadow-[0_0_12px_rgba(47,48,255,0.8)]"
+                  transition={SPRING}
+                />
+              )}
+            </button>
           ))}
         </div>
 
         <span className="eyebrow ml-auto hidden text-cream-dim/55 sm:inline">
-          / swipe, arrow keys, or the controls
+          / drag, arrow keys, or the controls
         </span>
       </div>
 
